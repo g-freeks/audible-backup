@@ -1,0 +1,61 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What This Project Does
+
+Audible Backup Tool syncs an Audible library, downloads AAX audiobook files via `audible-cli`, and converts them to chapter-split MP3s using `ffmpeg`. It has both a CLI (`app.ts`) and a web UI (`server.ts`).
+
+## Commands
+
+All commands require Node 22+ (uses `--experimental-strip-types` and `--experimental-sqlite`).
+
+```bash
+# Run tests (Node built-in test runner)
+npm test
+
+# Run a single test file
+node --experimental-strip-types --experimental-sqlite --test test/converter.test.ts
+
+# Start the web server (Hono on port 3000)
+npm run server
+
+# CLI commands
+npm run sync          # Download new audiobooks
+npm run convert       # Convert AAX to chapter-split MP3s
+npm run sync-convert  # Both in sequence
+npm run status        # Show library status
+npm run list          # List books ready for conversion
+npm run db-status     # Show database contents
+npm run db-reset      # Reset the database
+```
+
+## Architecture
+
+**Runtime**: Pure TypeScript executed directly by Node 22 with `--experimental-strip-types` (no build step). Uses Node's built-in `node:sqlite` (WAL mode) for persistence.
+
+**Core modules** (`src/`):
+- `config.ts` — Loads `.env` manually (no dotenv dependency), exports a `config` object. Environment variables override `.env` values.
+- `db.ts` — SQLite database with a single `audiobooks` table tracking download/conversion state by ASIN. Uses a lazy-initialized singleton connection.
+- `library.ts` — `AudibleLibrary` class wraps `audible-cli` commands via `spawn`/`execSync` to list and download books. Auto-imports existing `.aax` files into the DB on construction.
+- `converter.ts` — `Converter` class uses `ffmpeg` to decrypt AAX→MP3 (via activation bytes), then splits by chapters using JSON chapter metadata. Requires `AUDIBLE_ACTIVATION_BYTES`.
+- `progress.ts` — `ProgressReporter` interface with two implementations: `consoleReporter` (for CLI) and `EventReporter` (EventEmitter for web SSE streaming).
+- `operations.ts` — Global singleton tracking the currently active operation (sync or convert), ensuring only one runs at a time.
+
+**Web layer** (`src/web/`):
+- `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). POST endpoints for sync/convert return HTMX fragments that connect to SSE streams.
+- `sse.ts` — Bridges `EventReporter` events to SSE responses for real-time log streaming to the browser.
+- `templates/` — Server-rendered HTML templates (dashboard, library, convert pages).
+
+**Key patterns**:
+- `AudibleLibrary` and `Converter` both accept a `ProgressReporter` via constructor injection — `consoleReporter` for CLI use, `EventReporter` for web use.
+- Only one long-running operation (sync or convert) can run at a time, enforced by `operations.ts`.
+- External tool dependencies: `audible-cli` (Python, for downloading) and `ffmpeg` (for conversion).
+
+## Configuration
+
+All config is in `.env` (see `.env.example`). Key variables: `AUDIBLE_ACTIVATION_BYTES`, `AUDIBLE_TARGET_DIR`, `AUDIBLE_OUTPUT_DIR`, `DB_PATH`, `MP3_QUALITY`.
+
+## Docker
+
+`docker-compose.yml` mounts data volumes for AAX files, converted output, DB, and Audible auth. The container runs the web server.

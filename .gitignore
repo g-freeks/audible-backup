@@ -1,3 +1,5 @@
+.claude/
+.idea/
 node_modules/
 .env
 converted/
