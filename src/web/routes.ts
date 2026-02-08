@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { config } from "../config.ts";
-import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins } from "../db.ts";
+import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getAllIgnoredBooks, ignoreBook, unignoreBook } from "../db.ts";
 import { AudibleLibrary } from "../library.ts";
 import { Converter } from "../converter.ts";
 import {
@@ -38,6 +38,20 @@ routes.get("/api/status", (c) => {
 
 routes.get("/api/books", (c) => {
   return c.json(getAllAudiobooks());
+});
+
+// --- Ignore / Unignore ---
+
+routes.post("/api/ignore/:asin", (c) => {
+  const asin = c.req.param("asin");
+  ignoreBook(asin);
+  return c.redirect("/library");
+});
+
+routes.post("/api/unignore/:asin", (c) => {
+  const asin = c.req.param("asin");
+  unignoreBook(asin);
+  return c.redirect("/library");
 });
 
 // --- Sync ---

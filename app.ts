@@ -10,6 +10,9 @@ import {
   getAllAudiobooks,
   getDownloadedAsins,
   getConvertedAsins,
+  getAllIgnoredBooks,
+  ignoreBook,
+  unignoreBook,
 } from "./src/db.ts";
 
 function requireAudibleCli(): void {
@@ -45,6 +48,8 @@ Commands:
   status              Show library status without downloading
   list                List books ready for conversion
   db-status           Show database contents
+  ignore <asin>       Ignore a book (skip sync, convert, status)
+  unignore <asin>     Unignore a previously ignored book
   help                Show this help message
 
 Options:
@@ -61,6 +66,8 @@ Examples:
   app.ts status
   app.ts db-status
   app.ts list
+  app.ts ignore B0763YT294
+  app.ts unignore B0763YT294
         `);
     return;
   }
@@ -126,11 +133,13 @@ Examples:
         const downloaded = getDownloadedAsins();
         const converted = getConvertedAsins();
         const all = getAllAudiobooks();
+        const ignored = getAllIgnoredBooks();
 
         console.log(`\nDatabase Status (${config.dbPath}):`);
         console.log(`Total tracked: ${all.length}`);
         console.log(`Downloaded: ${downloaded.size}`);
         console.log(`Converted: ${converted.size}`);
+        console.log(`Ignored: ${ignored.length}`);
 
         if (all.length > 0) {
           console.log(`\nAudiobooks:`);
@@ -141,6 +150,35 @@ Examples:
             console.log(`  [${status}] ${author}${title} (${book.asin})`);
           }
         }
+
+        if (ignored.length > 0) {
+          console.log(`\nIgnored:`);
+          for (const book of ignored) {
+            const title = book.title || book.asin;
+            const author = book.author ? `${book.author}: ` : "";
+            console.log(`  [ignored] ${author}${title} (${book.asin})`);
+          }
+        }
+        break;
+      }
+      case "ignore": {
+        const asin = args[1];
+        if (!asin) {
+          console.error("Usage: app.ts ignore <asin>");
+          process.exit(1);
+        }
+        ignoreBook(asin);
+        console.log(`Ignored book: ${asin}`);
+        break;
+      }
+      case "unignore": {
+        const asin = args[1];
+        if (!asin) {
+          console.error("Usage: app.ts unignore <asin>");
+          process.exit(1);
+        }
+        unignoreBook(asin);
+        console.log(`Unignored book: ${asin}`);
         break;
       }
       case "db-reset": {

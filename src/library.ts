@@ -4,6 +4,7 @@ import * as path from "path";
 import { config } from "./config.ts";
 import {
   getDownloadedAsins,
+  getIgnoredAsins,
   markDownloaded,
   importExistingDownloads,
 } from "./db.ts";
@@ -104,7 +105,7 @@ export class AudibleLibrary {
     author: string,
     title: string,
   ): Promise<boolean> {
-    return new Promise((resolve) => {
+    const result = await new Promise((resolve) => {
       this.reporter.log(`Downloading: ${author}: ${title} (${asin})`);
 
       const downloadProcess = spawn(
@@ -157,6 +158,8 @@ export class AudibleLibrary {
         resolve(false);
       });
     });
+
+    return !!result;
   }
 
   async downloadAll(): Promise<void> {
@@ -221,12 +224,13 @@ export class AudibleLibrary {
       return;
     }
 
+    const ignoredAsins = getIgnoredAsins();
     const newBooks = libraryEntries.filter(
-      (entry) => !downloadedAsins.has(entry.asin),
+      (entry) => !downloadedAsins.has(entry.asin) && !ignoredAsins.has(entry.asin),
     );
 
     if (newBooks.length === 0) {
-      this.reporter.log("All books are already downloaded. Nothing to sync.");
+      this.reporter.log("All books are already downloaded (or ignored). Nothing to sync.");
       return;
     }
 
@@ -261,13 +265,15 @@ export class AudibleLibrary {
   async listStatus(): Promise<void> {
     const libraryEntries = this.getLibraryList();
     const downloadedAsins = getDownloadedAsins();
+    const ignoredAsins = getIgnoredAsins();
     const newBooks = libraryEntries.filter(
-      (entry) => !downloadedAsins.has(entry.asin),
+      (entry) => !downloadedAsins.has(entry.asin) && !ignoredAsins.has(entry.asin),
     );
 
     this.reporter.log(`\nLibrary Status:`);
     this.reporter.log(`Total books in library: ${libraryEntries.length}`);
     this.reporter.log(`Already downloaded: ${downloadedAsins.size}`);
+    this.reporter.log(`Ignored: ${ignoredAsins.size}`);
     this.reporter.log(`New books available: ${newBooks.length}`);
 
     if (newBooks.length > 0) {

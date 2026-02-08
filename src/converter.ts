@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { config } from "./config.ts";
-import { isConverted, markConverted } from "./db.ts";
+import { isConverted, markConverted, getIgnoredAsins } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 
 export interface ChapterInfo {
@@ -380,7 +380,8 @@ export class Converter {
     this.reporter.log(`Scanning for AAX files in: ${this.sourceDir}`);
     this.reporter.log(`Output directory: ${this.outputDir}`);
 
-    const bookFiles = this.findBookFiles();
+    const ignoredAsins = getIgnoredAsins();
+    const bookFiles = this.findBookFiles().filter((b) => !ignoredAsins.has(b.asin));
 
     if (bookFiles.length === 0) {
       this.reporter.log("No matching AAX and chapter files found");
@@ -422,7 +423,8 @@ export class Converter {
   }
 
   listBooks(): void {
-    const bookFiles = this.findBookFiles();
+    const ignoredAsins = getIgnoredAsins();
+    const bookFiles = this.findBookFiles().filter((b) => !ignoredAsins.has(b.asin));
 
     if (bookFiles.length === 0) {
       this.reporter.log("No matching AAX and chapter files found");

@@ -1,7 +1,7 @@
 import { layout } from "./layout.ts";
 import { config } from "../../config.ts";
 import { Converter, type BookFiles } from "../../converter.ts";
-import { isConverted } from "../../db.ts";
+import { isConverted, getIgnoredAsins } from "../../db.ts";
 
 export function convertPage(): string {
   let books: BookFiles[] = [];
@@ -18,8 +18,10 @@ export function convertPage(): string {
     error = e instanceof Error ? e.message : String(e);
   }
 
-  const unconverted = books.filter((b) => !isConverted(b.asin));
-  const alreadyConverted = books.filter((b) => isConverted(b.asin));
+  const ignoredAsins = getIgnoredAsins();
+  const activeBooks = books.filter((b) => !ignoredAsins.has(b.asin));
+  const unconverted = activeBooks.filter((b) => !isConverted(b.asin));
+  const alreadyConverted = activeBooks.filter((b) => isConverted(b.asin));
 
   const content = `
     <h1>Convert</h1>

@@ -1,8 +1,9 @@
 import { layout } from "./layout.ts";
-import { getAllAudiobooks } from "../../db.ts";
+import { getAllAudiobooks, getAllIgnoredBooks } from "../../db.ts";
 
 export function libraryPage(): string {
   const all = getAllAudiobooks();
+  const ignored = getAllIgnoredBooks();
 
   const content = `
     <h1>Library</h1>
@@ -25,6 +26,7 @@ export function libraryPage(): string {
           <th>Status</th>
           <th>Downloaded</th>
           <th>Chapters</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
@@ -43,10 +45,46 @@ export function libraryPage(): string {
             <td>${status}</td>
             <td>${date}</td>
             <td>${chapters}</td>
+            <td>
+              <form method="post" action="/api/ignore/${book.asin}" style="display:inline">
+                <button class="btn btn-sm" type="submit">Ignore</button>
+              </form>
+            </td>
           </tr>`;
         }).join("")}
       </tbody>
     </table>` : '<div class="empty">No books in database. Sync your library to get started.</div>'}
+
+    ${ignored.length > 0 ? `
+    <details style="margin-top: 2rem;">
+      <summary><h2 style="display:inline">Ignored (${ignored.length})</h2></summary>
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Author</th>
+            <th>ASIN</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ignored.map((book) => {
+            const title = escapeHtml(book.title || book.asin);
+            const author = escapeHtml(book.author || "");
+            return `<tr>
+              <td>${title}</td>
+              <td>${author}</td>
+              <td><code>${book.asin}</code></td>
+              <td>
+                <form method="post" action="/api/unignore/${book.asin}" style="display:inline">
+                  <button class="btn btn-sm" type="submit">Unignore</button>
+                </form>
+              </td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </details>` : ""}
   `;
 
   return layout("Library", content);

@@ -13,7 +13,11 @@ import {
   getDownloadedAsins,
   getConvertedAsins,
   getAllAudiobooks,
+  getAllIgnoredBooks,
   importExistingDownloads,
+  ignoreBook,
+  unignoreBook,
+  isIgnored,
 } from "../src/db.ts";
 
 let tmpDir: string;
@@ -172,5 +176,83 @@ describe("importExistingDownloads", () => {
 
   it("returns 0 for empty map", () => {
     assert.equal(importExistingDownloads(new Map()), 0);
+  });
+});
+
+describe("ignoreBook / unignoreBook / isIgnored", () => {
+  it("ignores a book by ASIN", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    assert.ok(!isIgnored("B000000001"));
+    ignoreBook("B000000001");
+    assert.ok(isIgnored("B000000001"));
+  });
+
+  it("unignores a previously ignored book", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    ignoreBook("B000000001");
+    assert.ok(isIgnored("B000000001"));
+    unignoreBook("B000000001");
+    assert.ok(!isIgnored("B000000001"));
+  });
+
+  it("ignoreBook upserts for unknown ASIN", () => {
+    ignoreBook("B099999999");
+    assert.ok(isIgnored("B099999999"));
+  });
+
+  it("unignoreBook is a no-op for unknown ASIN", () => {
+    unignoreBook("B099999999");
+    assert.ok(!isIgnored("B099999999"));
+  });
+});
+
+describe("getAllAudiobooks excludes ignored", () => {
+  it("does not return ignored books", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    markDownloaded("B000000002", "A2", "T2", "/b.aax");
+    ignoreBook("B000000001");
+    const all = getAllAudiobooks();
+    assert.equal(all.length, 1);
+    assert.equal(all[0].asin, "B000000002");
+  });
+});
+
+describe("getDownloadedAsins / getConvertedAsins exclude ignored", () => {
+  it("getDownloadedAsins excludes ignored books", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    markDownloaded("B000000002", "A2", "T2", "/b.aax");
+    ignoreBook("B000000001");
+    const downloaded = getDownloadedAsins();
+    assert.equal(downloaded.size, 1);
+    assert.ok(downloaded.has("B000000002"));
+    assert.ok(!downloaded.has("B000000001"));
+  });
+
+  it("getConvertedAsins excludes ignored books", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    markConverted("B000000001", "/out", 5);
+    markDownloaded("B000000002", "A2", "T2", "/b.aax");
+    markConverted("B000000002", "/out2", 3);
+    ignoreBook("B000000001");
+    const converted = getConvertedAsins();
+    assert.equal(converted.size, 1);
+    assert.ok(converted.has("B000000002"));
+  });
+});
+
+describe("getAllIgnoredBooks", () => {
+  it("returns only ignored books", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    markDownloaded("B000000002", "A2", "T2", "/b.aax");
+    ignoreBook("B000000001");
+    const ignored = getAllIgnoredBooks();
+    assert.equal(ignored.length, 1);
+    assert.equal(ignored[0].asin, "B000000001");
+  });
+
+  it("returns empty array when nothing is ignored", () => {
+    markDownloaded("B000000001", "A1", "T1", "/a.aax");
+    const ignored = getAllIgnoredBooks();
+    assert.equal(ignored.length, 0);
   });
 });

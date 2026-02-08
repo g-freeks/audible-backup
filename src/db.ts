@@ -33,9 +33,17 @@ export function getDb(): DatabaseSync {
             converted_at TEXT,
             aax_path TEXT,
             output_path TEXT,
-            chapter_count INTEGER
+            chapter_count INTEGER,
+            ignored_at TEXT
         )
     `);
+
+  // Migration: add ignored_at column if it doesn't exist
+  const cols = db.prepare("PRAGMA table_info(audiobooks)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "ignored_at")) {
+    db.exec("ALTER TABLE audiobooks ADD COLUMN ignored_at TEXT");
+  }
+
   return db;
 }
 
@@ -117,19 +125,27 @@ export interface AudiobookRow {
   aax_path: string | null;
   output_path: string | null;
   chapter_count: number | null;
+  ignored_at: string | null;
 }
 
 export function getAllAudiobooks(): AudiobookRow[] {
   const d = getDb();
   return d
-    .prepare("SELECT * FROM audiobooks ORDER BY downloaded_at DESC")
-    .all() as AudiobookRow[];
+      .prepare("SELECT * FROM audiobooks WHERE ignored_at IS NULL ORDER BY downloaded_at DESC")
+      .all() as unknown as AudiobookRow[];
+}
+
+export function getAllIgnoredBooks(): AudiobookRow[] {
+  const d = getDb();
+  return d
+      .prepare("SELECT * FROM audiobooks WHERE ignored_at IS NOT NULL ORDER BY ignored_at DESC")
+      .all() as unknown as AudiobookRow[];
 }
 
 export function getDownloadedAsins(): Set<string> {
   const d = getDb();
   const rows = d
-    .prepare("SELECT asin FROM audiobooks WHERE downloaded_at IS NOT NULL")
+    .prepare("SELECT asin FROM audiobooks WHERE downloaded_at IS NOT NULL AND ignored_at IS NULL")
     .all() as { asin: string }[];
   return new Set(rows.map((r) => r.asin));
 }
@@ -137,7 +153,37 @@ export function getDownloadedAsins(): Set<string> {
 export function getConvertedAsins(): Set<string> {
   const d = getDb();
   const rows = d
-    .prepare("SELECT asin FROM audiobooks WHERE converted_at IS NOT NULL")
+    .prepare("SELECT asin FROM audiobooks WHERE converted_at IS NOT NULL AND ignored_at IS NULL")
+    .all() as { asin: string }[];
+  return new Set(rows.map((r) => r.asin));
+}
+
+export function ignoreBook(asin: string): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO audiobooks (asin, ignored_at)
+    VALUES (?, datetime('now'))
+    ON CONFLICT(asin) DO UPDATE SET ignored_at = datetime('now')
+  `).run(asin);
+}
+
+export function unignoreBook(asin: string): void {
+  const d = getDb();
+  d.prepare("UPDATE audiobooks SET ignored_at = NULL WHERE asin = ?").run(asin);
+}
+
+export function isIgnored(asin: string): boolean {
+  const d = getDb();
+  const row = d
+    .prepare("SELECT 1 FROM audiobooks WHERE asin = ? AND ignored_at IS NOT NULL")
+    .get(asin) as Record<string, unknown> | undefined;
+  return row !== undefined;
+}
+
+export function getIgnoredAsins(): Set<string> {
+  const d = getDb();
+  const rows = d
+    .prepare("SELECT asin FROM audiobooks WHERE ignored_at IS NOT NULL")
     .all() as { asin: string }[];
   return new Set(rows.map((r) => r.asin));
 }
