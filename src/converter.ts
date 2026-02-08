@@ -1,0 +1,446 @@
+import { spawn } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import { config } from "./config.ts";
+import { isConverted, markConverted } from "./db.ts";
+import { type ProgressReporter, consoleReporter } from "./progress.ts";
+
+export interface ChapterInfo {
+  length_ms: number;
+  start_offset_ms: number;
+  start_offset_sec: number;
+  title: string;
+}
+
+export interface ChapterData {
+  content_metadata: {
+    chapter_info: {
+      brandIntroDurationMs?: number;
+      brandOutroDurationMs?: number;
+      chapters: ChapterInfo[];
+      is_accurate: boolean;
+      runtime_length_ms: number;
+      runtime_length_sec: number;
+    };
+    content_reference: {
+      asin: string;
+      [key: string]: any;
+    };
+    [key: string]: any;
+  };
+}
+
+export interface BookFiles {
+  aaxFile: string;
+  chapterFile: string;
+  asin: string;
+  bookTitle: string;
+  bookCover: string;
+}
+
+export class Converter {
+  sourceDir: string;
+  outputDir: string;
+  activationBytes: string;
+  private reporter: ProgressReporter;
+
+  constructor(
+    sourceDir: string = config.targetDir,
+    outputDir: string = config.outputDir,
+    activationBytes: string = config.activationBytes,
+    reporter: ProgressReporter = consoleReporter,
+  ) {
+    this.reporter = reporter;
+    this.sourceDir = path.resolve(
+      sourceDir.replace("~", process.env.HOME || ""),
+    );
+    this.outputDir = path.resolve(
+      outputDir.replace("~", process.env.HOME || ""),
+    );
+    this.activationBytes = activationBytes;
+
+    if (!this.activationBytes) {
+      throw new Error(
+        "No activation bytes provided. Set AUDIBLE_ACTIVATION_BYTES in .env or pass as parameter.",
+      );
+    }
+
+    this.ensureOutputDirectory();
+  }
+
+  ensureOutputDirectory(): void {
+    if (!fs.existsSync(this.outputDir)) {
+      fs.mkdirSync(this.outputDir, { recursive: true });
+      this.reporter.log(`Created output directory: ${this.outputDir}`);
+    }
+  }
+
+  sanitizeFilename(filename: string): string {
+    return filename
+      .replace(/[<>:"/\\|?*]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  formatTime(ms: number): string {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  }
+
+  async convertAaxToMp3(aaxFile: string, outputFile: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.reporter.log(`Converting AAX to MP3: ${path.basename(aaxFile)}`);
+
+      const ffmpegProcess = spawn(
+        "ffmpeg",
+        [
+          "-activation_bytes",
+          this.activationBytes,
+          "-i",
+          aaxFile,
+          "-vn",
+          "-c:a",
+          "libmp3lame",
+          "-q:a",
+          config.mp3Quality,
+          "-y",
+          outputFile,
+        ],
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+
+      let stderr = "";
+      ffmpegProcess.stderr?.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      ffmpegProcess.on("close", (code) => {
+        if (code === 0) {
+          this.reporter.log(
+            `Successfully converted: ${path.basename(outputFile)}`,
+          );
+          resolve(true);
+        } else {
+          this.reporter.error(
+            `Failed to convert ${path.basename(aaxFile)} (exit code: ${code})`,
+          );
+          if (stderr) {
+            this.reporter.error(`FFmpeg error: ${stderr.slice(-500)}`);
+          }
+          resolve(false);
+        }
+      });
+
+      ffmpegProcess.on("error", (error) => {
+        this.reporter.error(
+          `Error converting ${path.basename(aaxFile)}: ${error.message}`,
+        );
+        resolve(false);
+      });
+    });
+  }
+
+  async splitIntoChapters(
+    mp3File: string,
+    chapterData: ChapterData,
+    bookDir: string,
+  ): Promise<boolean> {
+    const chapters = chapterData.content_metadata.chapter_info.chapters;
+
+    if (!fs.existsSync(bookDir)) {
+      fs.mkdirSync(bookDir, { recursive: true });
+    }
+
+    this.reporter.log(`Splitting into ${chapters.length} chapters...`);
+
+    let successCount = 0;
+    for (let i = 0; i < chapters.length; i++) {
+      const chapter = chapters[i];
+      const chapterNumber = (i + 1).toString().padStart(2, "0");
+      const chapterTitle = this.sanitizeFilename(
+        chapter.title || `Chapter ${chapterNumber}`,
+      );
+      const outputFile = path.join(
+        bookDir,
+        `${chapterNumber} - ${chapterTitle}.mp3`,
+      );
+
+      if (fs.existsSync(outputFile)) {
+        this.reporter.log(
+          `Skipping existing chapter: ${chapterNumber} - ${chapterTitle}`,
+        );
+        successCount++;
+        continue;
+      }
+
+      const success = await this.splitChapter(mp3File, outputFile, chapter);
+      if (success) {
+        successCount++;
+      }
+    }
+
+    this.reporter.log(
+      `Chapter splitting complete: ${successCount}/${chapters.length} chapters created`,
+    );
+    return successCount === chapters.length;
+  }
+
+  async splitChapter(
+    inputFile: string,
+    outputFile: string,
+    chapter: ChapterInfo,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      const startTime = this.formatTime(chapter.start_offset_ms);
+      const duration = this.formatTime(chapter.length_ms);
+
+      const ffmpegProcess = spawn(
+        "ffmpeg",
+        [
+          "-i",
+          inputFile,
+          "-ss",
+          startTime,
+          "-t",
+          duration,
+          "-c",
+          "copy",
+          "-y",
+          outputFile,
+        ],
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+
+      let stderr = "";
+      ffmpegProcess.stderr?.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      ffmpegProcess.on("close", (code) => {
+        if (code === 0) {
+          resolve(true);
+        } else {
+          this.reporter.error(
+            `Failed to create chapter: ${path.basename(outputFile)} (exit code: ${code})`,
+          );
+          if (stderr) {
+            this.reporter.error(`FFmpeg error: ${stderr.slice(-200)}`);
+          }
+          resolve(false);
+        }
+      });
+
+      ffmpegProcess.on("error", (error) => {
+        this.reporter.error(
+          `Error creating chapter ${path.basename(outputFile)}: ${error.message}`,
+        );
+        resolve(false);
+      });
+    });
+  }
+
+  findBookFiles(): BookFiles[] {
+    const files = fs.readdirSync(this.sourceDir, { withFileTypes: true });
+    const bookMap = new Map<
+      string,
+      {
+        aaxFile?: string;
+        chapterFile?: string;
+        bookTitle?: string;
+        bookCover?: string;
+      }
+    >();
+
+    for (const file of files) {
+      if (file.isFile()) {
+        const fullPath = path.join(file.parentPath, file.name);
+        const asinMatch = file.name.match(/([A-Z0-9]{10})/);
+
+        if (asinMatch) {
+          const asin = asinMatch[1];
+          if (!bookMap.has(asin)) {
+            bookMap.set(asin, {});
+          }
+
+          const bookEntry = bookMap.get(asin)!;
+
+          if (file.name.endsWith(".aax")) {
+            bookEntry.aaxFile = fullPath;
+            const baseName = path.basename(file.name, ".aax");
+            bookEntry.bookTitle = baseName
+              .split("-LC_")[0]
+              .replace(asin, "")
+              .replace(/[_\s]+/g, " ")
+              .trim();
+          } else if (file.name.endsWith(".jpg")) {
+            bookEntry.bookCover = fullPath;
+          } else if (file.name.endsWith("-chapters.json")) {
+            bookEntry.chapterFile = fullPath;
+          }
+        }
+      }
+    }
+
+    const completeBooks: BookFiles[] = [];
+    for (const [asin, files] of bookMap) {
+      if (
+        files.aaxFile &&
+        files.chapterFile &&
+        files.bookTitle &&
+        files.bookCover
+      ) {
+        completeBooks.push({
+          aaxFile: files.aaxFile,
+          chapterFile: files.chapterFile,
+          asin,
+          bookTitle: files.bookTitle,
+          bookCover: files.bookCover,
+        });
+      }
+    }
+
+    return completeBooks;
+  }
+
+  getBookDirName(asin: string, bookTitle: string): string {
+    if (bookTitle) {
+      return this.sanitizeFilename(bookTitle);
+    }
+    return this.sanitizeFilename(`Book_${asin}`);
+  }
+
+  async convertBook(
+    aaxFile: string,
+    chapterFile: string,
+    asin: string,
+    bookTitle: string,
+    bookCover: string,
+  ): Promise<boolean> {
+    this.reporter.log(`\nProcessing book: ${asin}`);
+
+    if (isConverted(asin)) {
+      this.reporter.log(
+        `Book already converted (per database): ${bookTitle || asin}`,
+      );
+      return true;
+    }
+
+    try {
+      const chapterData: ChapterData = JSON.parse(
+        fs.readFileSync(chapterFile, "utf8"),
+      );
+
+      const bookDirName = this.getBookDirName(asin, bookTitle);
+      const bookDir = path.join(this.outputDir, bookDirName);
+
+      const tempMp3 = path.join(this.outputDir, `temp_${asin}.mp3`);
+
+      const conversionSuccess = await this.convertAaxToMp3(aaxFile, tempMp3);
+      if (!conversionSuccess) {
+        return false;
+      }
+
+      const splittingSuccess = await this.splitIntoChapters(
+        tempMp3,
+        chapterData,
+        bookDir,
+      );
+
+      if (fs.existsSync(bookCover)) {
+        fs.copyFileSync(bookCover, path.join(bookDir, `${bookDirName}.jpg`));
+      }
+
+      if (fs.existsSync(tempMp3)) {
+        fs.unlinkSync(tempMp3);
+        this.reporter.log("Cleaned up temporary file");
+      }
+
+      if (splittingSuccess) {
+        const chapterCount =
+          chapterData.content_metadata.chapter_info.chapters.length;
+        markConverted(asin, bookDir, chapterCount);
+        this.reporter.log(`Successfully processed: ${bookDirName}`);
+      }
+
+      return splittingSuccess;
+    } catch (error) {
+      this.reporter.error(`Error processing book ${asin}: ${error}`);
+      return false;
+    }
+  }
+
+  async convertAll(): Promise<void> {
+    this.reporter.log(`Scanning for AAX files in: ${this.sourceDir}`);
+    this.reporter.log(`Output directory: ${this.outputDir}`);
+
+    const bookFiles = this.findBookFiles();
+
+    if (bookFiles.length === 0) {
+      this.reporter.log("No matching AAX and chapter files found");
+      this.reporter.log(
+        "Make sure you have both .aax files and corresponding _chapters.json files",
+      );
+      return;
+    }
+
+    this.reporter.log(`\nFound ${bookFiles.length} books to convert:`);
+    bookFiles.forEach((book) => {
+      const name = book.bookTitle || `Book ${book.asin}`;
+      this.reporter.log(`  - ${name} (${book.asin})`);
+    });
+
+    let successCount = 0;
+    for (const book of bookFiles) {
+      const success = await this.convertBook(
+        book.aaxFile,
+        book.chapterFile,
+        book.asin,
+        book.bookTitle,
+        book.bookCover,
+      );
+      if (success) {
+        successCount++;
+      }
+
+      if (book !== bookFiles[bookFiles.length - 1]) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, config.convertDelayMs),
+        );
+      }
+    }
+
+    this.reporter.log(
+      `\nConversion complete! Successfully converted ${successCount}/${bookFiles.length} books`,
+    );
+  }
+
+  listBooks(): void {
+    const bookFiles = this.findBookFiles();
+
+    if (bookFiles.length === 0) {
+      this.reporter.log("No matching AAX and chapter files found");
+      return;
+    }
+
+    this.reporter.log(
+      `Found ${bookFiles.length} books ready for conversion:\n`,
+    );
+
+    bookFiles.forEach((book, index) => {
+      const name = book.bookTitle || `Book ${book.asin}`;
+      this.reporter.log(`${(index + 1).toString().padStart(2, " ")}. ${name}`);
+      this.reporter.log(`    ASIN: ${book.asin}`);
+      this.reporter.log(`     AAX: ${path.basename(book.aaxFile)}`);
+      this.reporter.log(`    JSON: ${path.basename(book.chapterFile)}`);
+      this.reporter.log(`   COVER: ${path.basename(book.bookCover)}`);
+      this.reporter.log("");
+    });
+  }
+}

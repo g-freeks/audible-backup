@@ -1,0 +1,18 @@
+services:
+  audible-backup:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${AUDIBLE_TARGET_DIR:-./data/aax}:/data/aax
+      - ${AUDIBLE_OUTPUT_DIR:-./data/converted}:/data/converted
+      - ${DB_DIR:-./data/db}:/data/db
+      - ${AUDIBLE_AUTH_DIR:-./data/audible-auth}:/root/.audible
+    environment:
+      - AUDIBLE_ACTIVATION_BYTES=${AUDIBLE_ACTIVATION_BYTES}
+      - AUDIBLE_TARGET_DIR=/data/aax
+      - AUDIBLE_OUTPUT_DIR=/data/converted
+      - DB_PATH=/data/db/audiobooks.db
+      - MP3_QUALITY=${MP3_QUALITY:-4}
+      - WEB_PORT=3000
+    restart: unless-stopped
