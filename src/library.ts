@@ -7,6 +7,7 @@ import {
   getIgnoredAsins,
   markDownloaded,
   importExistingDownloads,
+  upsertBook,
 } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 
@@ -70,8 +71,21 @@ export class AudibleLibrary {
     }
   }
 
+  syncLibraryMetadata(): void {
+    this.reporter.log("Syncing library metadata from Audible...");
+    try {
+      execSync("audible library sync", {
+        encoding: "utf8",
+        maxBuffer: config.libraryMaxBuffer,
+      });
+    } catch (error) {
+      throw new Error(`Failed to sync library metadata: ${error}`);
+    }
+  }
+
   getLibraryList(): AudiobookEntry[] {
     try {
+      this.syncLibraryMetadata();
       this.reporter.log("Fetching library list...");
       const output = execSync("audible library list", {
         encoding: "utf8",
@@ -212,35 +226,43 @@ export class AudibleLibrary {
     });
   }
 
-  async sync(): Promise<void> {
+  async sync(): Promise<AudiobookEntry[]> {
     const libraryEntries = this.getLibraryList();
     this.reporter.log(`Found ${libraryEntries.length} books in library`);
 
     const downloadedAsins = getDownloadedAsins();
-
-    if (downloadedAsins.size === 0) {
-      this.reporter.log("No downloads recorded. Downloading entire library...");
-      await this.downloadAll();
-      return;
-    }
-
     const ignoredAsins = getIgnoredAsins();
     const newBooks = libraryEntries.filter(
       (entry) => !downloadedAsins.has(entry.asin) && !ignoredAsins.has(entry.asin),
     );
 
+    // Upsert all new books into the DB so the web UI can display them
+    for (const book of newBooks) {
+      upsertBook(book.asin, book.author, book.title);
+    }
+
     if (newBooks.length === 0) {
-      this.reporter.log("All books are already downloaded (or ignored). Nothing to sync.");
+      this.reporter.log("All books are already downloaded (or ignored). Nothing new.");
+    } else {
+      this.reporter.log(`Found ${newBooks.length} new books:`);
+      newBooks.forEach((book) => {
+        this.reporter.log(`  - ${book.author}: ${book.title} (${book.asin})`);
+      });
+    }
+
+    return newBooks;
+  }
+
+  async downloadBooks(books: AudiobookEntry[]): Promise<void> {
+    if (books.length === 0) {
+      this.reporter.log("No books to download.");
       return;
     }
 
-    this.reporter.log(`Found ${newBooks.length} new books to download:`);
-    newBooks.forEach((book) => {
-      this.reporter.log(`  - ${book.author}: ${book.title} (${book.asin})`);
-    });
+    this.reporter.log(`Downloading ${books.length} books...`);
 
     let successCount = 0;
-    for (const book of newBooks) {
+    for (const book of books) {
       const success = await this.downloadBook(
         book.asin,
         book.author,
@@ -250,7 +272,7 @@ export class AudibleLibrary {
         successCount++;
       }
 
-      if (book !== newBooks[newBooks.length - 1]) {
+      if (book !== books[books.length - 1]) {
         await new Promise((resolve) =>
           setTimeout(resolve, config.downloadDelayMs),
         );
@@ -258,7 +280,7 @@ export class AudibleLibrary {
     }
 
     this.reporter.log(
-      `\nSync complete! Downloaded ${successCount}/${newBooks.length} new books.`,
+      `\nDownload complete! Downloaded ${successCount}/${books.length} books.`,
     );
   }
 

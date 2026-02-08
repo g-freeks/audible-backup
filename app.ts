@@ -11,6 +11,7 @@ import {
   getDownloadedAsins,
   getConvertedAsins,
   getAllIgnoredBooks,
+  getAudiobookByAsin,
   ignoreBook,
   unignoreBook,
 } from "./src/db.ts";
@@ -42,9 +43,10 @@ Usage:
   app.ts [command] [options]
 
 Commands:
-  sync                Download new audiobooks (default)
+  sync                Sync library metadata and download new audiobooks (default)
+  download <asin>     Download a single book by ASIN
   convert [asin]      Convert AAX files to MP3 chapters (all or specific ASIN)
-  sync-convert        Download new books and convert all AAX files
+  sync-convert        Sync, download new books, and convert all AAX files
   status              Show library status without downloading
   list                List books ready for conversion
   db-status           Show database contents
@@ -60,6 +62,7 @@ Options:
 Examples:
   app.ts sync
   app.ts sync --dir ~/Music/audible
+  app.ts download B0763YT294
   app.ts convert
   app.ts convert B0763YT294
   app.ts sync-convert
@@ -82,7 +85,20 @@ Examples:
       case "sync": {
         requireAudibleCli();
         const library = new AudibleLibrary(targetDir);
-        await library.sync();
+        const newBooks = await library.sync();
+        await library.downloadBooks(newBooks);
+        break;
+      }
+      case "download": {
+        requireAudibleCli();
+        const asin = args[1];
+        if (!asin) {
+          console.error("Usage: app.ts download <asin>");
+          process.exit(1);
+        }
+        const library = new AudibleLibrary(targetDir);
+        const book = getAudiobookByAsin(asin);
+        await library.downloadBook(asin, book?.author || "", book?.title || asin);
         break;
       }
       case "status": {
@@ -119,7 +135,8 @@ Examples:
       case "sync-convert": {
         requireAudibleCli();
         const library = new AudibleLibrary(targetDir);
-        await library.sync();
+        const newBooks = await library.sync();
+        await library.downloadBooks(newBooks);
         const converter = new Converter(targetDir, outputDir, activationBytes);
         await converter.convertAll();
         break;

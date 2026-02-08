@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { config } from "../config.ts";
-import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getAllIgnoredBooks, ignoreBook, unignoreBook } from "../db.ts";
-import { AudibleLibrary } from "../library.ts";
+import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getAllIgnoredBooks, getNotDownloadedBooks, getAudiobookByAsin, ignoreBook, unignoreBook } from "../db.ts";
+import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
 import { Converter } from "../converter.ts";
 import {
   isOperationRunning,
@@ -90,6 +90,75 @@ routes.get("/library/sync/stream", (c) => {
   const op = getActiveOperation();
   if (!op || op.type !== "sync") {
     return c.text("No active sync operation", 404);
+  }
+  return sseStream(c, op.reporter);
+});
+
+// --- Download ---
+
+routes.post("/library/download", async (c) => {
+  if (isOperationRunning()) {
+    return c.html(
+      '<div class="log-panel"><div class="log-line warn">An operation is already running. Please wait for it to complete.</div></div>',
+      409,
+    );
+  }
+
+  const body = await c.req.parseBody({ all: true });
+  let asins: string[] = [];
+  if (body.asin) {
+    asins = Array.isArray(body.asin) ? body.asin as string[] : [body.asin as string];
+  }
+
+  const reporter = startOperation("download");
+
+  const library = new AudibleLibrary(config.targetDir, reporter);
+
+  // Build the book list from ASINs or default to all not-downloaded
+  let books: AudiobookEntry[];
+  if (asins.length > 0) {
+    books = asins.map((asin) => {
+      const row = getAudiobookByAsin(asin);
+      return {
+        asin,
+        author: row?.author || "",
+        title: row?.title || asin,
+        fullLine: "",
+      };
+    });
+  } else {
+    const notDownloaded = getNotDownloadedBooks();
+    books = notDownloaded.map((row) => ({
+      asin: row.asin,
+      author: row.author || "",
+      title: row.title || row.asin,
+      fullLine: "",
+    }));
+  }
+
+  library
+    .downloadBooks(books)
+    .then(() => reporter.done({ success: true, summary: "Download complete" }))
+    .catch((err: Error) =>
+      reporter.done({ success: false, summary: err.message }),
+    )
+    .finally(() => clearOperation());
+
+  return c.html(`
+    <div class="log-panel"
+      hx-ext="sse"
+      sse-connect="/library/download/stream"
+      sse-swap="log"
+      hx-swap="beforeend">
+      <div class="log-line">Download started...</div>
+    </div>
+  `);
+});
+
+routes.get("/library/download/stream", (c) => {
+  const op = getActiveOperation();
+  if (!op || op.type !== "download") {
+    return c.text("No active download operation", 404);
   }
   return sseStream(c, op.reporter);
 });

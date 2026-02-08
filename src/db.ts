@@ -188,6 +188,29 @@ export function getIgnoredAsins(): Set<string> {
   return new Set(rows.map((r) => r.asin));
 }
 
+export function upsertBook(asin: string, author: string, title: string): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO audiobooks (asin, author, title)
+    VALUES (?, ?, ?)
+    ON CONFLICT(asin) DO UPDATE SET author = excluded.author, title = excluded.title
+  `).run(asin, author, title);
+}
+
+export function getNotDownloadedBooks(): AudiobookRow[] {
+  const d = getDb();
+  return d
+    .prepare("SELECT * FROM audiobooks WHERE downloaded_at IS NULL AND ignored_at IS NULL ORDER BY title")
+    .all() as unknown as AudiobookRow[];
+}
+
+export function getAudiobookByAsin(asin: string): AudiobookRow | undefined {
+  const d = getDb();
+  return d
+    .prepare("SELECT * FROM audiobooks WHERE asin = ?")
+    .get(asin) as unknown as AudiobookRow | undefined;
+}
+
 export function importExistingDownloads(asins: Map<string, string>): number {
   const d = getDb();
   const stmt = d.prepare(`

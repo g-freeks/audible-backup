@@ -1,11 +1,12 @@
 import { layout } from "./layout.ts";
-import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getAllIgnoredBooks } from "../../db.ts";
+import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getAllIgnoredBooks, getNotDownloadedBooks } from "../../db.ts";
 
 export function dashboardPage(): string {
   const all = getAllAudiobooks();
   const downloaded = getDownloadedAsins();
   const converted = getConvertedAsins();
   const ignored = getAllIgnoredBooks();
+  const notDownloaded = getNotDownloadedBooks();
   const pending = downloaded.size - converted.size;
 
   const recent = all.slice(0, 8);
@@ -28,6 +29,10 @@ export function dashboardPage(): string {
       <div class="card">
         <div class="label">Pending Conversion</div>
         <div class="value" style="color: ${pending > 0 ? "var(--warn)" : "var(--text-muted)"}">${pending}</div>
+      </div>
+      <div class="card">
+        <div class="label">Not Downloaded</div>
+        <div class="value" style="color: ${notDownloaded.length > 0 ? "var(--warn)" : "var(--text-muted)"}">${notDownloaded.length}</div>
       </div>
       <div class="card">
         <div class="label">Ignored</div>
