@@ -1,4 +1,4 @@
-import { execSync, spawn } from "child_process";
+import { execSync, spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { config } from "./config.ts";
@@ -71,22 +71,9 @@ export class AudibleLibrary {
     }
   }
 
-  syncLibraryMetadata(): void {
-    this.reporter.log("Syncing library metadata from Audible...");
-    try {
-      execSync("audible library sync", {
-        encoding: "utf8",
-        maxBuffer: config.libraryMaxBuffer,
-      });
-    } catch (error) {
-      throw new Error(`Failed to sync library metadata: ${error}`);
-    }
-  }
-
   getLibraryList(): AudiobookEntry[] {
     try {
-      this.syncLibraryMetadata();
-      this.reporter.log("Fetching library list...");
+      this.reporter.log("Fetching library list from Audible...");
       const output = execSync("audible library list", {
         encoding: "utf8",
         maxBuffer: config.libraryMaxBuffer,
@@ -114,44 +101,70 @@ export class AudibleLibrary {
     }
   }
 
+  private pipeProcessOutput(proc: ChildProcess, asin?: string): void {
+    let lastPct = -1;
+    proc.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString();
+      for (const line of text.split(/[\r\n]+/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const pctMatch = trimmed.match(/(\d+)%/);
+        if (pctMatch) {
+          const pct = parseInt(pctMatch[1]);
+          if (pct !== lastPct) {
+            lastPct = pct;
+            if (asin) {
+              this.reporter.bookProgress?.(asin, pct);
+            } else {
+              this.reporter.progress?.(pct, "Downloading");
+            }
+          }
+        } else {
+          this.reporter.log(trimmed);
+        }
+      }
+    });
+
+    proc.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString().trim();
+      if (text) this.reporter.error(text);
+    });
+  }
+
   async downloadBook(
     asin: string,
     author: string,
     title: string,
+    force: boolean = false,
   ): Promise<boolean> {
     const result = await new Promise((resolve) => {
       this.reporter.log(`Downloading: ${author}: ${title} (${asin})`);
 
+      const downloadArgs = [
+        "download",
+        "--asin",
+        asin,
+        "-o",
+        this.targetDir,
+        "--aax",
+        "--cover",
+        "--chapter",
+        "--annotation",
+        "-f",
+        "asin_ascii",
+        "--ignore-podcasts",
+      ];
+      if (force) downloadArgs.push("--overwrite");
+
       const downloadProcess = spawn(
         "audible",
-        [
-          "download",
-          "--asin",
-          asin,
-          "-o",
-          this.targetDir,
-          "--aax",
-          "--cover",
-          "--chapter",
-          "--annotation",
-          "-f",
-          "asin_ascii",
-          "--ignore-podcasts",
-        ],
+        downloadArgs,
         {
           stdio: ["pipe", "pipe", "pipe"],
         },
       );
 
-      downloadProcess.stdout?.on("data", (data: Buffer) => {
-        const text = data.toString().trim();
-        if (text) this.reporter.log(text);
-      });
-
-      downloadProcess.stderr?.on("data", (data: Buffer) => {
-        const text = data.toString().trim();
-        if (text) this.reporter.error(text);
-      });
+      this.pipeProcessOutput(downloadProcess, asin);
 
       downloadProcess.on("close", (code) => {
         if (code === 0) {
@@ -200,15 +213,7 @@ export class AudibleLibrary {
         },
       );
 
-      downloadProcess.stdout?.on("data", (data: Buffer) => {
-        const text = data.toString().trim();
-        if (text) this.reporter.log(text);
-      });
-
-      downloadProcess.stderr?.on("data", (data: Buffer) => {
-        const text = data.toString().trim();
-        if (text) this.reporter.error(text);
-      });
+      this.pipeProcessOutput(downloadProcess);
 
       downloadProcess.on("close", (code) => {
         if (code === 0) {
@@ -226,53 +231,66 @@ export class AudibleLibrary {
     });
   }
 
-  async sync(): Promise<AudiobookEntry[]> {
+  async sync(force: boolean = false): Promise<AudiobookEntry[]> {
     const libraryEntries = this.getLibraryList();
     this.reporter.log(`Found ${libraryEntries.length} books in library`);
 
-    const downloadedAsins = getDownloadedAsins();
     const ignoredAsins = getIgnoredAsins();
-    const newBooks = libraryEntries.filter(
-      (entry) => !downloadedAsins.has(entry.asin) && !ignoredAsins.has(entry.asin),
-    );
+    let books: AudiobookEntry[];
 
-    // Upsert all new books into the DB so the web UI can display them
-    for (const book of newBooks) {
+    if (force) {
+      books = libraryEntries.filter(
+        (entry) => !ignoredAsins.has(entry.asin),
+      );
+    } else {
+      const downloadedAsins = getDownloadedAsins();
+      books = libraryEntries.filter(
+        (entry) => !downloadedAsins.has(entry.asin) && !ignoredAsins.has(entry.asin),
+      );
+    }
+
+    // Upsert all books into the DB so the web UI can display them
+    for (const book of books) {
       upsertBook(book.asin, book.author, book.title);
     }
 
-    if (newBooks.length === 0) {
+    if (books.length === 0) {
       this.reporter.log("All books are already downloaded (or ignored). Nothing new.");
     } else {
-      this.reporter.log(`Found ${newBooks.length} new books:`);
-      newBooks.forEach((book) => {
+      this.reporter.log(`Found ${books.length} ${force ? "" : "new "}books:`);
+      books.forEach((book) => {
         this.reporter.log(`  - ${book.author}: ${book.title} (${book.asin})`);
       });
     }
 
-    return newBooks;
+    return books;
   }
 
-  async downloadBooks(books: AudiobookEntry[]): Promise<void> {
+  async downloadBooks(books: AudiobookEntry[], force: boolean = false): Promise<void> {
     if (books.length === 0) {
       this.reporter.log("No books to download.");
       return;
     }
 
-    this.reporter.log(`Downloading ${books.length} books...`);
+    this.reporter.log(`Downloading ${books.length} book${books.length === 1 ? "" : "s"}...`);
 
     let successCount = 0;
-    for (const book of books) {
+    for (let i = 0; i < books.length; i++) {
+      const book = books[i];
+      this.reporter.log(`\n[${i + 1}/${books.length}] ${book.author}: ${book.title} (${book.asin})`);
+      this.reporter.bookStart?.(book.asin);
       const success = await this.downloadBook(
         book.asin,
         book.author,
         book.title,
+        force,
       );
+      this.reporter.bookDone?.(book.asin, success);
       if (success) {
         successCount++;
       }
 
-      if (book !== books[books.length - 1]) {
+      if (i < books.length - 1) {
         await new Promise((resolve) =>
           setTimeout(resolve, config.downloadDelayMs),
         );
@@ -280,7 +298,7 @@ export class AudibleLibrary {
     }
 
     this.reporter.log(
-      `\nDownload complete! Downloaded ${successCount}/${books.length} books.`,
+      `\nDownload complete! ${successCount}/${books.length} succeeded.`,
     );
   }
 

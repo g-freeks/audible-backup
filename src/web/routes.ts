@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { config } from "../config.ts";
-import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getAllIgnoredBooks, getNotDownloadedBooks, getAudiobookByAsin, ignoreBook, unignoreBook } from "../db.ts";
+
+import * as fs from "fs";
+import * as path from "path";
+import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, isConverted, ignoreBook, unignoreBook, deleteBook } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
 import { Converter } from "../converter.ts";
 import {
@@ -10,17 +13,28 @@ import {
   clearOperation,
 } from "../operations.ts";
 import { sseStream } from "./sse.ts";
-import { dashboardPage } from "./templates/dashboard.ts";
-import { libraryPage } from "./templates/library.ts";
-import { convertPage } from "./templates/convert.ts";
+import { booksPage } from "./templates/books.ts";
 
 export const routes = new Hono();
 
 // --- Pages ---
 
-routes.get("/", (c) => c.html(dashboardPage()));
-routes.get("/library", (c) => c.html(libraryPage()));
-routes.get("/convert", (c) => c.html(convertPage()));
+routes.get("/", (c) => {
+  let convertibleAsins = new Set<string>();
+  try {
+    const converter = new Converter(
+      config.targetDir,
+      config.outputDir,
+      config.activationBytes,
+    );
+    convertibleAsins = new Set(converter.findBookFiles().map((b) => b.asin));
+  } catch {
+    // activation bytes or target dir may not be configured
+  }
+  return c.html(booksPage(convertibleAsins));
+});
+routes.get("/library", (c) => c.redirect("/"));
+routes.get("/convert", (c) => c.redirect("/"));
 
 // --- JSON API ---
 
@@ -45,13 +59,49 @@ routes.get("/api/books", (c) => {
 routes.post("/api/ignore/:asin", (c) => {
   const asin = c.req.param("asin");
   ignoreBook(asin);
-  return c.redirect("/library");
+  return c.redirect("/");
 });
 
 routes.post("/api/unignore/:asin", (c) => {
   const asin = c.req.param("asin");
   unignoreBook(asin);
-  return c.redirect("/library");
+  return c.redirect("/");
+});
+
+routes.post("/api/delete/:asin", (c) => {
+  const asin = c.req.param("asin");
+  const book = getAudiobookByAsin(asin);
+
+  if (book) {
+    // Delete .aax file
+    if (book.aax_path && fs.existsSync(book.aax_path)) {
+      fs.unlinkSync(book.aax_path);
+    }
+    // Delete chapter .json and cover .jpg (same directory as .aax)
+    if (book.aax_path) {
+      const dir = path.dirname(book.aax_path);
+      const chapterFile = path.join(dir, `${asin}-chapters.json`);
+      const coverPattern = new RegExp(`${asin}.*\\.jpg$`);
+      if (fs.existsSync(chapterFile)) fs.unlinkSync(chapterFile);
+      try {
+        for (const f of fs.readdirSync(dir)) {
+          if (coverPattern.test(f)) {
+            fs.unlinkSync(path.join(dir, f));
+          }
+        }
+      } catch {
+        // dir may not exist
+      }
+    }
+    // Delete output directory
+    if (book.output_path && fs.existsSync(book.output_path)) {
+      fs.rmSync(book.output_path, { recursive: true, force: true });
+    }
+    // Reset DB fields
+    deleteBook(asin);
+  }
+
+  return c.redirect("/");
 });
 
 // --- Sync ---
@@ -75,15 +125,7 @@ routes.post("/library/sync", (c) => {
     )
     .finally(() => clearOperation());
 
-  return c.html(`
-    <div class="log-panel"
-      hx-ext="sse"
-      sse-connect="/library/sync/stream"
-      sse-swap="log"
-      hx-swap="beforeend">
-      <div class="log-line">Sync started...</div>
-    </div>
-  `);
+  return c.html(logPanel("/library/sync/stream", "Sync started..."));
 });
 
 routes.get("/library/sync/stream", (c) => {
@@ -144,15 +186,11 @@ routes.post("/library/download", async (c) => {
     )
     .finally(() => clearOperation());
 
-  return c.html(`
-    <div class="log-panel"
-      hx-ext="sse"
-      sse-connect="/library/download/stream"
-      sse-swap="log"
-      hx-swap="beforeend">
-      <div class="log-line">Download started...</div>
-    </div>
-  `);
+  const oobSwaps = books.map((b) =>
+    `<span id="status-${escapeHtml(b.asin)}" hx-swap-oob="true"><span class="badge badge-muted">Queued</span></span>`
+  ).join("");
+
+  return c.html(logPanel("/library/download/stream", "Download started...", oobSwaps));
 });
 
 routes.get("/library/download/stream", (c) => {
@@ -182,6 +220,13 @@ routes.post("/convert/all", (c) => {
       config.activationBytes,
       reporter,
     );
+
+    const ignoredAsins = getIgnoredAsins();
+    const queuedBooks = converter.findBookFiles().filter((b) => !ignoredAsins.has(b.asin) && !isConverted(b.asin));
+    const oobSwaps = queuedBooks.map((b) =>
+      `<span id="status-${escapeHtml(b.asin)}" hx-swap-oob="true"><span class="badge badge-muted">Queued</span></span>`
+    ).join("");
+
     converter
       .convertAll()
       .then(() =>
@@ -191,6 +236,8 @@ routes.post("/convert/all", (c) => {
         reporter.done({ success: false, summary: err.message }),
       )
       .finally(() => clearOperation());
+
+    return c.html(logPanel("/convert/stream", "Conversion started...", oobSwaps));
   } catch (err) {
     clearOperation();
     const msg = err instanceof Error ? err.message : String(err);
@@ -199,16 +246,6 @@ routes.post("/convert/all", (c) => {
       400,
     );
   }
-
-  return c.html(`
-    <div class="log-panel"
-      hx-ext="sse"
-      sse-connect="/convert/stream"
-      sse-swap="log"
-      hx-swap="beforeend">
-      <div class="log-line">Conversion started...</div>
-    </div>
-  `);
 });
 
 // --- Convert Single ---
@@ -263,6 +300,10 @@ routes.post("/convert/:asin", (c) => {
         reporter.done({ success: false, summary: err.message }),
       )
       .finally(() => clearOperation());
+
+    const oobSwap = `<span id="status-${escapeHtml(asin)}" hx-swap-oob="true"><span class="badge badge-warn">Converting&hellip;</span><div class="progress-bar"><div class="progress-bar-fill"></div></div></span>`;
+
+    return c.html(logPanel("/convert/stream", `Converting ${escapeHtml(asin)}...`, oobSwap));
   } catch (err) {
     clearOperation();
     const msg = err instanceof Error ? err.message : String(err);
@@ -271,16 +312,6 @@ routes.post("/convert/:asin", (c) => {
       400,
     );
   }
-
-  return c.html(`
-    <div class="log-panel"
-      hx-ext="sse"
-      sse-connect="/convert/stream"
-      sse-swap="log"
-      hx-swap="beforeend">
-      <div class="log-line">Converting ${escapeHtml(asin)}...</div>
-    </div>
-  `);
 });
 
 routes.get("/convert/stream", (c) => {
@@ -293,4 +324,19 @@ routes.get("/convert/stream", (c) => {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function logPanel(streamUrl: string, label: string, extra: string = ""): string {
+  return `
+    <div id="op-progress"></div>
+    <div class="log-panel"
+      hx-ext="sse"
+      sse-connect="${streamUrl}"
+      sse-swap="log"
+      sse-close="done"
+      hx-swap="beforeend">
+      <div class="log-line">${escapeHtml(label)}</div>
+    </div>
+    ${extra}
+  `;
 }

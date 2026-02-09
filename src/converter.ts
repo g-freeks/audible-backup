@@ -10,6 +10,7 @@ export interface ChapterInfo {
   start_offset_ms: number;
   start_offset_sec: number;
   title: string;
+  chapters?: ChapterInfo[];
 }
 
 export interface ChapterData {
@@ -42,6 +43,7 @@ export class Converter {
   sourceDir: string;
   outputDir: string;
   activationBytes: string;
+  force: boolean;
   private reporter: ProgressReporter;
 
   constructor(
@@ -49,8 +51,10 @@ export class Converter {
     outputDir: string = config.outputDir,
     activationBytes: string = config.activationBytes,
     reporter: ProgressReporter = consoleReporter,
+    force: boolean = false,
   ) {
     this.reporter = reporter;
+    this.force = force;
     this.sourceDir = path.resolve(
       sourceDir.replace("~", process.env.HOME || ""),
     );
@@ -82,6 +86,18 @@ export class Converter {
       .trim();
   }
 
+  flattenChapters(chapters: ChapterInfo[]): ChapterInfo[] {
+    const result: ChapterInfo[] = [];
+    for (const chapter of chapters) {
+      if (chapter.chapters && chapter.chapters.length > 0) {
+        result.push(...this.flattenChapters(chapter.chapters));
+      } else {
+        result.push(chapter);
+      }
+    }
+    return result;
+  }
+
   formatTime(ms: number): string {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -90,7 +106,18 @@ export class Converter {
     return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   }
 
-  async convertAaxToMp3(aaxFile: string, outputFile: string): Promise<boolean> {
+  parseTimeMs(timeStr: string): number {
+    const m = timeStr.match(/(\d+):(\d+):(\d+)\.(\d+)/);
+    if (!m) return 0;
+    return (
+      parseInt(m[1]) * 3600000 +
+      parseInt(m[2]) * 60000 +
+      parseInt(m[3]) * 1000 +
+      parseInt(m[4].padEnd(3, "0").slice(0, 3))
+    );
+  }
+
+  async convertAaxToMp3(aaxFile: string, outputFile: string, totalDurationMs?: number, asin?: string): Promise<boolean> {
     return new Promise((resolve) => {
       this.reporter.log(`Converting AAX to MP3: ${path.basename(aaxFile)}`);
 
@@ -115,11 +142,32 @@ export class Converter {
       );
 
       let stderr = "";
+      let lastPct = -1;
       ffmpegProcess.stderr?.on("data", (data: Buffer) => {
-        stderr += data.toString();
+        const chunk = data.toString();
+        stderr += chunk;
+
+        if (totalDurationMs && totalDurationMs > 0) {
+          const timeMatch = chunk.match(/time=(\d+:\d+:\d+\.\d+)/);
+          if (timeMatch) {
+            const currentMs = this.parseTimeMs(timeMatch[1]);
+            const pct = Math.min(100, Math.round((currentMs / totalDurationMs) * 100));
+            if (pct !== lastPct) {
+              lastPct = pct;
+              this.reporter.progress?.(pct, "Converting");
+              // Scale to 0-90% for per-book progress (splitting is 90-100%)
+              if (asin) {
+                this.reporter.bookProgress?.(asin, Math.round(pct * 0.9));
+              }
+            }
+          }
+        }
       });
 
       ffmpegProcess.on("close", (code) => {
+        if (totalDurationMs && totalDurationMs > 0 && lastPct < 100 && code === 0) {
+          this.reporter.progress?.(100, "Converting");
+        }
         if (code === 0) {
           this.reporter.log(
             `Successfully converted: ${path.basename(outputFile)}`,
@@ -149,8 +197,9 @@ export class Converter {
     mp3File: string,
     chapterData: ChapterData,
     bookDir: string,
+    asin?: string,
   ): Promise<boolean> {
-    const chapters = chapterData.content_metadata.chapter_info.chapters;
+    const chapters = this.flattenChapters(chapterData.content_metadata.chapter_info.chapters);
 
     if (!fs.existsSync(bookDir)) {
       fs.mkdirSync(bookDir, { recursive: true });
@@ -170,22 +219,35 @@ export class Converter {
         `${chapterNumber} - ${chapterTitle}.mp3`,
       );
 
+      const splitPct = Math.round(((i + 1) / chapters.length) * 100);
+
       if (fs.existsSync(outputFile)) {
         this.reporter.log(
-          `Skipping existing chapter: ${chapterNumber} - ${chapterTitle}`,
+          `  [${i + 1}/${chapters.length}] Skipping existing: ${chapterTitle}`,
         );
         successCount++;
+        this.reporter.progress?.(splitPct, "Splitting chapters");
+        if (asin) {
+          this.reporter.bookProgress?.(asin, 90 + Math.round(splitPct * 0.1));
+        }
         continue;
       }
 
+      this.reporter.log(
+        `  [${i + 1}/${chapters.length}] Splitting: ${chapterTitle}`,
+      );
       const success = await this.splitChapter(mp3File, outputFile, chapter);
       if (success) {
         successCount++;
       }
+      this.reporter.progress?.(splitPct, "Splitting chapters");
+      if (asin) {
+        this.reporter.bookProgress?.(asin, 90 + Math.round(splitPct * 0.1));
+      }
     }
 
     this.reporter.log(
-      `Chapter splitting complete: ${successCount}/${chapters.length} chapters created`,
+      `Chapter splitting complete: ${successCount}/${chapters.length} chapters`,
     );
     return successCount === chapters.length;
   }
@@ -324,11 +386,13 @@ export class Converter {
     bookCover: string,
   ): Promise<boolean> {
     this.reporter.log(`\nProcessing book: ${asin}`);
+    this.reporter.bookStart?.(asin);
 
-    if (isConverted(asin)) {
+    if (!this.force && isConverted(asin)) {
       this.reporter.log(
         `Book already converted (per database): ${bookTitle || asin}`,
       );
+      this.reporter.bookDone?.(asin, true);
       return true;
     }
 
@@ -341,9 +405,11 @@ export class Converter {
       const bookDir = path.join(this.outputDir, bookDirName);
 
       const tempMp3 = path.join(this.outputDir, `temp_${asin}.mp3`);
+      const totalDurationMs = chapterData.content_metadata.chapter_info.runtime_length_ms;
 
-      const conversionSuccess = await this.convertAaxToMp3(aaxFile, tempMp3);
+      const conversionSuccess = await this.convertAaxToMp3(aaxFile, tempMp3, totalDurationMs, asin);
       if (!conversionSuccess) {
+        this.reporter.bookDone?.(asin, false);
         return false;
       }
 
@@ -351,6 +417,7 @@ export class Converter {
         tempMp3,
         chapterData,
         bookDir,
+        asin,
       );
 
       if (fs.existsSync(bookCover)) {
@@ -364,14 +431,16 @@ export class Converter {
 
       if (splittingSuccess) {
         const chapterCount =
-          chapterData.content_metadata.chapter_info.chapters.length;
+          this.flattenChapters(chapterData.content_metadata.chapter_info.chapters).length;
         markConverted(asin, bookDir, chapterCount);
         this.reporter.log(`Successfully processed: ${bookDirName}`);
       }
 
+      this.reporter.bookDone?.(asin, splittingSuccess);
       return splittingSuccess;
     } catch (error) {
       this.reporter.error(`Error processing book ${asin}: ${error}`);
+      this.reporter.bookDone?.(asin, false);
       return false;
     }
   }
@@ -398,7 +467,10 @@ export class Converter {
     });
 
     let successCount = 0;
-    for (const book of bookFiles) {
+    for (let i = 0; i < bookFiles.length; i++) {
+      const book = bookFiles[i];
+      const name = book.bookTitle || `Book ${book.asin}`;
+      this.reporter.log(`\n[${i + 1}/${bookFiles.length}] Converting: ${name} (${book.asin})`);
       const success = await this.convertBook(
         book.aaxFile,
         book.chapterFile,
@@ -410,7 +482,7 @@ export class Converter {
         successCount++;
       }
 
-      if (book !== bookFiles[bookFiles.length - 1]) {
+      if (i < bookFiles.length - 1) {
         await new Promise((resolve) =>
           setTimeout(resolve, config.convertDelayMs),
         );
@@ -418,7 +490,7 @@ export class Converter {
     }
 
     this.reporter.log(
-      `\nConversion complete! Successfully converted ${successCount}/${bookFiles.length} books`,
+      `\nConversion complete! ${successCount}/${bookFiles.length} succeeded.`,
     );
   }
 

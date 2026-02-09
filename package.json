@@ -2,7 +2,7 @@
   "name": "audible_backup_tool",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "app.ts",
   "scripts": {
     "sync": "node --experimental-strip-types --experimental-sqlite app.ts sync",
     "convert": "node --experimental-strip-types --experimental-sqlite app.ts convert",

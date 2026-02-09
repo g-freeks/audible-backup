@@ -135,6 +135,13 @@ export function getAllAudiobooks(): AudiobookRow[] {
       .all() as unknown as AudiobookRow[];
 }
 
+export function getAllBooks(): AudiobookRow[] {
+  const d = getDb();
+  return d
+      .prepare("SELECT * FROM audiobooks ORDER BY title")
+      .all() as unknown as AudiobookRow[];
+}
+
 export function getAllIgnoredBooks(): AudiobookRow[] {
   const d = getDb();
   return d
@@ -202,6 +209,19 @@ export function getNotDownloadedBooks(): AudiobookRow[] {
   return d
     .prepare("SELECT * FROM audiobooks WHERE downloaded_at IS NULL AND ignored_at IS NULL ORDER BY title")
     .all() as unknown as AudiobookRow[];
+}
+
+export function deleteBook(asin: string): void {
+  const d = getDb();
+  d.prepare(`
+    UPDATE audiobooks SET
+      downloaded_at = NULL,
+      converted_at = NULL,
+      aax_path = NULL,
+      output_path = NULL,
+      chapter_count = NULL
+    WHERE asin = ?
+  `).run(asin);
 }
 
 export function getAudiobookByAsin(asin: string): AudiobookRow | undefined {

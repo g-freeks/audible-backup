@@ -4,6 +4,7 @@ import { execSync } from "child_process";
 import { config } from "./src/config.ts";
 import { AudibleLibrary } from "./src/library.ts";
 import { Converter } from "./src/converter.ts";
+import { consoleReporter } from "./src/progress.ts";
 import {
   closeDb,
   resetDatabase,
@@ -58,6 +59,7 @@ Options:
   --dir <path>        Target directory for downloads (default from .env)
   --output <path>     Output directory for converted files (default from .env)
   --activation-bytes  Audible activation bytes (default from .env)
+  --force             Re-download or re-convert even if already done
 
 Examples:
   app.ts sync
@@ -79,14 +81,15 @@ Examples:
   const outputDir = getArg(args, "--output") || config.outputDir;
   const activationBytes =
     getArg(args, "--activation-bytes") || config.activationBytes;
+  const force = args.includes("--force");
 
   try {
     switch (command) {
       case "sync": {
         requireAudibleCli();
         const library = new AudibleLibrary(targetDir);
-        const newBooks = await library.sync();
-        await library.downloadBooks(newBooks);
+        const newBooks = await library.sync(force);
+        await library.downloadBooks(newBooks, force);
         break;
       }
       case "download": {
@@ -98,7 +101,7 @@ Examples:
         }
         const library = new AudibleLibrary(targetDir);
         const book = getAudiobookByAsin(asin);
-        await library.downloadBook(asin, book?.author || "", book?.title || asin);
+        await library.downloadBook(asin, book?.author || "", book?.title || asin, force);
         break;
       }
       case "status": {
@@ -108,7 +111,7 @@ Examples:
         break;
       }
       case "convert": {
-        const converter = new Converter(targetDir, outputDir, activationBytes);
+        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force);
         const asinArg = args.find((a) => a.match(/^[A-Z0-9]{10}$/));
         if (asinArg) {
           const books = converter.findBookFiles();
@@ -135,9 +138,9 @@ Examples:
       case "sync-convert": {
         requireAudibleCli();
         const library = new AudibleLibrary(targetDir);
-        const newBooks = await library.sync();
-        await library.downloadBooks(newBooks);
-        const converter = new Converter(targetDir, outputDir, activationBytes);
+        const newBooks = await library.sync(force);
+        await library.downloadBooks(newBooks, force);
+        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force);
         await converter.convertAll();
         break;
       }

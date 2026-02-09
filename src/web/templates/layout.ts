@@ -57,7 +57,7 @@ export function layout(title: string, content: string): string {
       border-bottom-color: var(--accent);
     }
     main {
-      max-width: 1100px;
+      max-width: 100%;
       margin: 0 auto;
       padding: 2rem 1.5rem;
     }
@@ -124,11 +124,8 @@ export function layout(title: string, content: string): string {
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .log-panel {
       background: #0a0c10;
-      border: 1px solid var(--border);
-      border-radius: 8px;
       padding: 1rem;
-      margin-top: 1rem;
-      max-height: 400px;
+      max-height: 300px;
       overflow-y: auto;
       font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
       font-size: 0.8rem;
@@ -140,23 +137,168 @@ export function layout(title: string, content: string): string {
     .log-done { padding-top: 0.5rem; border-top: 1px solid var(--border); margin-top: 0.5rem; font-weight: 600; }
     .log-done.success { color: var(--success); }
     .log-done.error { color: var(--danger); }
+    #log-float {
+      position: fixed;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(800px, calc(100% - 2rem));
+      z-index: 100;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #log-float.visible { display: flex; }
+    #log-float.minimized { width: auto; min-width: 260px; }
+    #log-float.minimized .log-panel,
+    #log-float.minimized #op-progress { display: none; }
+    #log-float-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.75rem;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: default;
+      user-select: none;
+    }
+    #log-float.minimized #log-float-header { border-bottom: none; }
+    #log-float-header button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0 0.25rem;
+      transition: color 0.15s;
+    }
+    #log-float-header button:hover { color: var(--text); }
     .empty { text-align: center; padding: 3rem; color: var(--text-muted); }
-    .actions { margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: center; }
+    .actions { margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
     .htmx-indicator { display: none; }
     .htmx-request .htmx-indicator { display: inline-block; }
     .spinner { width: 1em; height: 1em; border: 2px solid var(--text-muted); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .library-layout {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 3.5rem - 4rem);
+    }
+    .library-layout h1 { flex-shrink: 0; }
+    .library-layout .actions { flex-shrink: 0; }
+    .table-scroll {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .table-scroll table { border: none; border-radius: 0; }
+    .table-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--surface2); }
+    .progress-bar {
+      height: 3px;
+      background: var(--surface2);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 40%;
+      background: var(--accent);
+      border-radius: 2px;
+      animation: progress-indeterminate 1.5s ease-in-out infinite;
+      transition: width 0.3s ease;
+    }
+    @keyframes progress-indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+    .badge-danger { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
+    .progress-bar-lg { height: 6px; margin-top: 0; }
+    .progress-label { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; display: block; }
+    #op-progress { margin-bottom: 0.5rem; }
+    #op-progress:empty { margin-bottom: 0; }
+    [id^="status-"] .progress-bar { height: 6px; min-width: 80px; }
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .filter-bar input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 0.45rem 0.75rem;
+      font-size: 0.85rem;
+      outline: none;
+      min-width: 200px;
+    }
+    .filter-bar input:focus { border-color: var(--accent); }
+    .filter-pills { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .filter-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text-muted);
+      padding: 0.25rem 0.7rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .filter-btn:hover { color: var(--text); border-color: var(--text-muted); }
+    .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--text); }
+    th.sortable::after { content: ''; display: inline-block; width: 0; margin-left: 0.4rem; }
+    th.sortable.asc::after { content: '▲'; font-size: 0.6rem; vertical-align: middle; }
+    th.sortable.desc::after { content: '▼'; font-size: 0.6rem; vertical-align: middle; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #ef4444; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text-muted); }
   </style>
 </head>
 <body>
   <nav>
     <a href="/" class="brand">Audible Backup</a>
-    <a href="/"${title === "Dashboard" ? ' class="active"' : ""}>Dashboard</a>
-    <a href="/library"${title === "Library" ? ' class="active"' : ""}>Library</a>
-    <a href="/convert"${title === "Convert" ? ' class="active"' : ""}>Convert</a>
+    <a href="/" class="active">Books</a>
   </nav>
   <main>${content}</main>
+  <div id="log-float">
+    <div id="log-float-header">
+      <span id="log-float-title">Operation Log</span>
+      <button id="log-float-minimize" title="Minimize">&#x2015;</button>
+    </div>
+    <div id="progress-panel"></div>
+  </div>
   <script>
+    const logFloat = document.getElementById('log-float');
+    const progressPanel = document.getElementById('progress-panel');
+    const minimizeBtn = document.getElementById('log-float-minimize');
+    // Show the floating panel when content first arrives
+    const observer = new MutationObserver(() => {
+      if (progressPanel.children.length > 0 && !logFloat.classList.contains('visible')) {
+        logFloat.classList.add('visible');
+      }
+    });
+    observer.observe(progressPanel, { childList: true });
+
+    minimizeBtn.addEventListener('click', () => {
+      logFloat.classList.toggle('minimized');
+    });
+
     // Auto-scroll log panels
     document.addEventListener('htmx:sseMessage', function(e) {
       const panel = e.target.closest('.log-panel');
