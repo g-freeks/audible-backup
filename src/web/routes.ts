@@ -151,6 +151,7 @@ routes.post("/library/download", async (c) => {
   if (body.asin) {
     asins = Array.isArray(body.asin) ? body.asin as string[] : [body.asin as string];
   }
+  const force = body.force === "true";
 
   const reporter = startOperation("download");
 
@@ -179,7 +180,7 @@ routes.post("/library/download", async (c) => {
   }
 
   library
-    .downloadBooks(books)
+    .downloadBooks(books, force)
     .then(() => reporter.done({ success: true, summary: "Download complete" }))
     .catch((err: Error) =>
       reporter.done({ success: false, summary: err.message }),
@@ -203,13 +204,16 @@ routes.get("/library/download/stream", (c) => {
 
 // --- Convert All ---
 
-routes.post("/convert/all", (c) => {
+routes.post("/convert/all", async (c) => {
   if (isOperationRunning()) {
     return c.html(
       '<div class="log-panel"><div class="log-line warn">An operation is already running. Please wait for it to complete.</div></div>',
       409,
     );
   }
+
+  const body = await c.req.parseBody();
+  const force = body.force === "true";
 
   const reporter = startOperation("convert");
 
@@ -219,10 +223,11 @@ routes.post("/convert/all", (c) => {
       config.outputDir,
       config.activationBytes,
       reporter,
+      force,
     );
 
     const ignoredAsins = getIgnoredAsins();
-    const queuedBooks = converter.findBookFiles().filter((b) => !ignoredAsins.has(b.asin) && !isConverted(b.asin));
+    const queuedBooks = converter.findBookFiles().filter((b) => !ignoredAsins.has(b.asin) && (force || !isConverted(b.asin)));
     const oobSwaps = queuedBooks.map((b) =>
       `<span id="status-${escapeHtml(b.asin)}" hx-swap-oob="true"><span class="badge badge-muted">Queued</span></span>`
     ).join("");
@@ -250,7 +255,7 @@ routes.post("/convert/all", (c) => {
 
 // --- Convert Single ---
 
-routes.post("/convert/:asin", (c) => {
+routes.post("/convert/:asin", async (c) => {
   const asin = c.req.param("asin");
 
   if (isOperationRunning()) {
@@ -260,6 +265,9 @@ routes.post("/convert/:asin", (c) => {
     );
   }
 
+  const body = await c.req.parseBody();
+  const force = body.force === "true";
+
   const reporter = startOperation("convert");
 
   try {
@@ -268,6 +276,7 @@ routes.post("/convert/:asin", (c) => {
       config.outputDir,
       config.activationBytes,
       reporter,
+      force,
     );
     const books = converter.findBookFiles();
     const book = books.find((b) => b.asin === asin);

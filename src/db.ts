@@ -34,7 +34,8 @@ export function getDb(): DatabaseSync {
             aax_path TEXT,
             output_path TEXT,
             chapter_count INTEGER,
-            ignored_at TEXT
+            ignored_at TEXT,
+            not_downloadable_at TEXT
         )
     `);
 
@@ -42,6 +43,9 @@ export function getDb(): DatabaseSync {
   const cols = db.prepare("PRAGMA table_info(audiobooks)").all() as { name: string }[];
   if (!cols.some((c) => c.name === "ignored_at")) {
     db.exec("ALTER TABLE audiobooks ADD COLUMN ignored_at TEXT");
+  }
+  if (!cols.some((c) => c.name === "not_downloadable_at")) {
+    db.exec("ALTER TABLE audiobooks ADD COLUMN not_downloadable_at TEXT");
   }
 
   return db;
@@ -74,7 +78,8 @@ export function markDownloaded(
             author = excluded.author,
             title = excluded.title,
             downloaded_at = excluded.downloaded_at,
-            aax_path = excluded.aax_path
+            aax_path = excluded.aax_path,
+            not_downloadable_at = NULL
     `,
   ).run(asin, author, title, aaxPath);
 }
@@ -126,6 +131,7 @@ export interface AudiobookRow {
   output_path: string | null;
   chapter_count: number | null;
   ignored_at: string | null;
+  not_downloadable_at: string | null;
 }
 
 export function getAllAudiobooks(): AudiobookRow[] {
@@ -195,6 +201,13 @@ export function getIgnoredAsins(): Set<string> {
   return new Set(rows.map((r) => r.asin));
 }
 
+export function markNotDownloadable(asin: string): void {
+  const d = getDb();
+  d.prepare(`
+    UPDATE audiobooks SET not_downloadable_at = datetime('now') WHERE asin = ?
+  `).run(asin);
+}
+
 export function upsertBook(asin: string, author: string, title: string): void {
   const d = getDb();
   d.prepare(`
@@ -207,7 +220,7 @@ export function upsertBook(asin: string, author: string, title: string): void {
 export function getNotDownloadedBooks(): AudiobookRow[] {
   const d = getDb();
   return d
-    .prepare("SELECT * FROM audiobooks WHERE downloaded_at IS NULL AND ignored_at IS NULL ORDER BY title")
+    .prepare("SELECT * FROM audiobooks WHERE downloaded_at IS NULL AND ignored_at IS NULL AND not_downloadable_at IS NULL ORDER BY title")
     .all() as unknown as AudiobookRow[];
 }
 
@@ -219,7 +232,8 @@ export function deleteBook(asin: string): void {
       converted_at = NULL,
       aax_path = NULL,
       output_path = NULL,
-      chapter_count = NULL
+      chapter_count = NULL,
+      not_downloadable_at = NULL
     WHERE asin = ?
   `).run(asin);
 }

@@ -7,6 +7,7 @@ function escapeHtml(s: string): string {
 
 function getStatus(book: AudiobookRow, convertibleAsins: Set<string>): string {
   if (book.ignored_at) return "ignored";
+  if (book.not_downloadable_at) return "not-downloadable";
   if (!book.downloaded_at) return "not-downloaded";
   if (!book.converted_at && convertibleAsins.has(book.asin)) return "convertible";
   if (!book.converted_at) return "downloaded";
@@ -16,6 +17,7 @@ function getStatus(book: AudiobookRow, convertibleAsins: Set<string>): string {
 function statusBadge(status: string): string {
   switch (status) {
     case "ignored": return '<span class="badge badge-danger">Ignored</span>';
+    case "not-downloadable": return '<span class="badge badge-danger">Not Downloadable</span>';
     case "not-downloaded": return '<span class="badge badge-muted">Not Downloaded</span>';
     case "convertible": return '<span class="badge badge-warn">Ready</span>';
     case "downloaded": return '<span class="badge badge-warn">Downloaded</span>';
@@ -24,36 +26,78 @@ function statusBadge(status: string): string {
   }
 }
 
+function redownloadItem(asin: string): string {
+  return `<button class="dropdown-item" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"asin":"${asin}","force":"true"}'>Re-download</button>`;
+}
+
+function ignoreItem(asin: string): string {
+  return `<button class="dropdown-item" onclick="fetch('/api/ignore/${asin}',{method:'POST'}).then(()=>location.reload())">Ignore</button>`;
+}
+
+function deleteItem(asin: string): string {
+  return `<button class="dropdown-item danger" onclick="if(confirm('Delete files for this book?'))fetch('/api/delete/${asin}',{method:'POST'}).then(()=>location.reload())">Delete</button>`;
+}
+
 function actionButtons(book: AudiobookRow, status: string): string {
-  const buttons: string[] = [];
+  const asin = book.asin;
+  let primary = "";
+  const items: string[] = [];
 
   switch (status) {
-    case "ignored":
-      buttons.push(`<form method="post" action="/api/unignore/${book.asin}" style="display:inline"><button class="btn btn-sm btn-ghost" type="submit" title="Remove from ignored list">Unignore</button></form>`);
+    case "not-downloadable":
+      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}"}' title="Retry downloading this audiobook">Retry</button>`;
+      items.push(ignoreItem(asin));
       break;
     case "not-downloaded":
-      buttons.push(`<button class="btn btn-sm btn-primary" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${book.asin}"}' title="Download this audiobook from Audible">Download</button>`);
-      buttons.push(`<form method="post" action="/api/ignore/${book.asin}" style="display:inline"><button class="btn btn-sm btn-ghost" type="submit" title="Hide this book from the library">Ignore</button></form>`);
-      break;
-    case "convertible":
-      buttons.push(`<button class="btn btn-sm btn-primary" hx-post="/convert/${book.asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Convert AAX to chapter-split MP3s">Convert</button>`);
-      buttons.push(`<form method="post" action="/api/delete/${book.asin}" style="display:inline" onsubmit="return confirm('Delete files for this book?')"><button class="btn btn-sm btn-danger" type="submit" title="Delete downloaded AAX and related files">Delete</button></form>`);
+      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}"}' title="Download this audiobook from Audible">Download</button>`;
+      items.push(ignoreItem(asin));
       break;
     case "downloaded":
-      buttons.push(`<form method="post" action="/api/delete/${book.asin}" style="display:inline" onsubmit="return confirm('Delete files for this book?')"><button class="btn btn-sm btn-danger" type="submit" title="Delete downloaded AAX and related files">Delete</button></form>`);
+      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}","force":"true"}' title="Re-download with overwrite">Re-download</button>`;
+      items.push(ignoreItem(asin));
+      items.push(deleteItem(asin));
+      break;
+    case "convertible":
+      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Convert AAX to chapter-split MP3s">Convert</button>`;
+      items.push(redownloadItem(asin));
+      items.push(ignoreItem(asin));
+      items.push(deleteItem(asin));
       break;
     case "converted":
-      buttons.push(`<form method="post" action="/api/delete/${book.asin}" style="display:inline" onsubmit="return confirm('Delete all files for this book?')"><button class="btn btn-sm btn-danger" type="submit" title="Delete all downloaded and converted files">Delete</button></form>`);
+      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"force":"true"}' title="Re-convert AAX to chapter-split MP3s">Re-convert</button>`;
+      items.push(redownloadItem(asin));
+      items.push(ignoreItem(asin));
+      items.push(deleteItem(asin));
+      break;
+    case "ignored":
+      primary = `<button class="btn btn-sm btn-primary split-main" onclick="fetch('/api/unignore/${asin}',{method:'POST'}).then(()=>location.reload())" title="Remove from ignored list">Unignore</button>`;
+      items.push(deleteItem(asin));
       break;
   }
 
-  return buttons.join(" ");
+  if (!primary) return "";
+  if (items.length === 0) return primary;
+
+  return `<div class="action-dropdown"><div class="split-btn">${primary}<button class="btn btn-sm btn-primary split-caret" type="button" onclick="event.stopPropagation();this.closest('.action-dropdown').classList.toggle('open')">&#9662;</button></div><div class="dropdown-menu">${items.join("")}</div></div>`;
 }
 
 export function booksPage(convertibleAsins: Set<string>): string {
   const books = getAllBooks();
-  const hasNotDownloaded = books.some((b) => !b.downloaded_at && !b.ignored_at);
+  const hasNotDownloaded = books.some((b) => !b.downloaded_at && !b.ignored_at && !b.not_downloadable_at);
 
+  const statusCounts: Record<string, number> = {};
+  books.forEach(book => {
+    const s = getStatus(book, convertibleAsins);
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+  });
+  const statusDefs = [
+    { value: "not-downloaded", label: "Not Downloaded" },
+    { value: "not-downloadable", label: "Not Downloadable" },
+    { value: "downloaded", label: "Downloaded" },
+    { value: "convertible", label: "Ready" },
+    { value: "converted", label: "Converted" },
+    { value: "ignored", label: "Ignored" },
+  ];
   const content = `
     <div class="library-layout">
       <h1>Books</h1>
@@ -81,12 +125,9 @@ export function booksPage(convertibleAsins: Set<string>): string {
       <div class="filter-bar">
         <input type="text" id="search-input" placeholder="Search by title, author, or ASIN..." autocomplete="off">
         <div class="filter-pills">
-          <button class="filter-btn active" data-filter="all">All (${books.length})</button>
-          <button class="filter-btn" data-filter="not-downloaded">Not Downloaded (${books.filter((b) => !b.downloaded_at && !b.ignored_at).length})</button>
-          <button class="filter-btn" data-filter="downloaded">Downloaded (${books.filter((b) => b.downloaded_at && !b.converted_at && !b.ignored_at && !convertibleAsins.has(b.asin)).length})</button>
-          <button class="filter-btn" data-filter="convertible">Convertible (${books.filter((b) => b.downloaded_at && !b.converted_at && !b.ignored_at && convertibleAsins.has(b.asin)).length})</button>
-          <button class="filter-btn" data-filter="converted">Converted (${books.filter((b) => b.converted_at && !b.ignored_at).length})</button>
-          <button class="filter-btn" data-filter="ignored">Ignored (${books.filter((b) => b.ignored_at).length})</button>
+          ${statusDefs.map(s =>
+            `<button class="filter-btn active" data-status="${s.value}">${s.label} (${statusCounts[s.value] || 0})</button>`
+          ).join("\n          ")}
         </div>
       </div>
 
@@ -128,37 +169,50 @@ export function booksPage(convertibleAsins: Set<string>): string {
           </tbody>
         </table>
       </div>` : '<div class="empty">No books in database. Sync your library to get started.</div>'}
+
     </div>
 
     <script>
-      // Search filtering
       const searchInput = document.getElementById('search-input');
       const tbody = document.querySelector('#books-table tbody');
-      let activeFilter = 'all';
+      const allStatuses = ['not-downloaded','not-downloadable','downloaded','convertible','converted','ignored'];
+      const activeStatuses = new Set(allStatuses);
 
       function getRows() {
         return Array.from(document.querySelectorAll('#books-table tbody tr[data-status]'));
       }
 
       function applyFilters() {
-        const query = searchInput.value.toLowerCase();
+        const query = searchInput?.value.toLowerCase() || '';
         getRows().forEach(row => {
           const matchesSearch = !query || row.dataset.search.includes(query);
-          const matchesFilter = activeFilter === 'all' || row.dataset.status === activeFilter;
+          const matchesFilter = activeStatuses.has(row.dataset.status);
           row.style.display = (matchesSearch && matchesFilter) ? '' : 'none';
         });
       }
 
       searchInput?.addEventListener('input', applyFilters);
 
-      // Filter pills
-      document.querySelectorAll('.filter-btn').forEach(btn => {
+      // Status filter pills (inline, multi-select)
+      document.querySelectorAll('.filter-btn[data-status]').forEach(btn => {
         btn.addEventListener('click', () => {
-          document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          activeFilter = btn.dataset.filter;
+          const status = btn.dataset.status;
+          if (btn.classList.contains('active')) {
+            btn.classList.remove('active');
+            activeStatuses.delete(status);
+          } else {
+            btn.classList.add('active');
+            activeStatuses.add(status);
+          }
           applyFilters();
         });
+      });
+
+      // Close action dropdowns on outside click
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.split-caret')) {
+          document.querySelectorAll('.action-dropdown.open').forEach(d => d.classList.remove('open'));
+        }
       });
 
       // Select-all checkbox (only affects visible rows)
@@ -172,7 +226,7 @@ export function booksPage(convertibleAsins: Set<string>): string {
       });
 
       // Column sorting
-      const statusOrder = { 'not-downloaded': 0, 'convertible': 1, 'downloaded': 2, 'converted': 3, 'ignored': 4 };
+      const statusOrder = { 'not-downloaded': 0, 'not-downloadable': 1, 'convertible': 2, 'downloaded': 3, 'converted': 4, 'ignored': 5 };
       let sortCol = null;
       let sortDir = 'asc';
 

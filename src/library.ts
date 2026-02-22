@@ -6,6 +6,7 @@ import {
   getDownloadedAsins,
   getIgnoredAsins,
   markDownloaded,
+  markNotDownloadable,
   importExistingDownloads,
   upsertBook,
 } from "./db.ts";
@@ -164,10 +165,22 @@ export class AudibleLibrary {
         },
       );
 
+      let outputText = "";
+      downloadProcess.stdout?.on("data", (data: Buffer) => {
+        outputText += data.toString();
+      });
+      downloadProcess.stderr?.on("data", (data: Buffer) => {
+        outputText += data.toString();
+      });
+
       this.pipeProcessOutput(downloadProcess, asin);
 
       downloadProcess.on("close", (code) => {
-        if (code === 0) {
+        if (outputText.includes("is not downloadable")) {
+          this.reporter.warn(`Marked as not downloadable: ${title}`);
+          markNotDownloadable(asin);
+          resolve(false);
+        } else if (code === 0) {
           this.reporter.log(`Successfully downloaded: ${title}`);
           const aaxPath = path.join(this.targetDir, `${asin}.aax`);
           markDownloaded(asin, author, title, aaxPath);

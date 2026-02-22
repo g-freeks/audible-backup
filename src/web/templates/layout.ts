@@ -5,6 +5,7 @@ export function layout(title: string, content: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - Audible Backup</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M3 5c0 0 4-2 13 2v22c-9-4-13-2-13-2V5z' fill='%236c8cff'/><path d='M29 5c0 0-4-2-13 2v22c9-4 13-2 13-2V5z' fill='%238ba4ff'/></svg>">
   <script src="/static/htmx.min.js"></script>
   <script src="/static/sse.js"></script>
   <style>
@@ -27,34 +28,6 @@ export function layout(title: string, content: string): string {
       background: var(--bg);
       color: var(--text);
       line-height: 1.5;
-    }
-    nav {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 0 1.5rem;
-      display: flex;
-      align-items: center;
-      gap: 0;
-      height: 3.5rem;
-    }
-    nav .brand {
-      font-weight: 600;
-      font-size: 1.1rem;
-      margin-right: 2rem;
-      color: var(--text);
-      text-decoration: none;
-    }
-    nav a {
-      color: var(--text-muted);
-      text-decoration: none;
-      padding: 1rem 1rem;
-      font-size: 0.9rem;
-      border-bottom: 2px solid transparent;
-      transition: color 0.15s, border-color 0.15s;
-    }
-    nav a:hover, nav a.active {
-      color: var(--text);
-      border-bottom-color: var(--accent);
     }
     main {
       max-width: 100%;
@@ -181,6 +154,15 @@ export function layout(title: string, content: string): string {
       transition: color 0.15s;
     }
     #log-float-header button:hover { color: var(--text); }
+    #log-float-reload {
+      background: var(--accent);
+      color: #fff;
+      border-radius: 4px;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    #log-float-reload:hover { background: var(--accent-hover); }
     .empty { text-align: center; padding: 3rem; color: var(--text-muted); }
     .actions { margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
     .htmx-indicator { display: none; }
@@ -190,7 +172,7 @@ export function layout(title: string, content: string): string {
     .library-layout {
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 3.5rem - 4rem);
+      height: calc(100vh - 4rem);
     }
     .library-layout h1 { flex-shrink: 0; }
     .library-layout .actions { flex-shrink: 0; }
@@ -259,27 +241,67 @@ export function layout(title: string, content: string): string {
     }
     .filter-btn:hover { color: var(--text); border-color: var(--text-muted); }
     .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { color: var(--text); }
-    th.sortable::after { content: ''; display: inline-block; width: 0; margin-left: 0.4rem; }
-    th.sortable.asc::after { content: '▲'; font-size: 0.6rem; vertical-align: middle; }
-    th.sortable.desc::after { content: '▼'; font-size: 0.6rem; vertical-align: middle; }
+    th.sortable::after { content: '⇅'; display: inline-block; margin-left: 0.3rem; font-size: 0.6rem; vertical-align: middle; opacity: 0.3; }
+    th.sortable:hover::after { opacity: 0.6; }
+    th.sortable.asc::after { content: '▲'; opacity: 1; }
+    th.sortable.desc::after { content: '▼'; opacity: 1; }
     .btn-danger { background: var(--danger); color: #fff; }
     .btn-danger:hover { background: #ef4444; }
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
     .btn-ghost:hover { color: var(--text); border-color: var(--text-muted); }
+    .action-dropdown { position: relative; display: inline-flex; }
+    .split-btn { display: inline-flex; }
+    .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .split-caret {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      border-left: 1px solid rgba(255,255,255,0.2);
+      padding: 0.3rem 0.35rem;
+      font-size: 0.65rem;
+    }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      z-index: 50;
+      min-width: 140px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.25rem 0;
+      margin-top: 2px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .action-dropdown.open .dropdown-menu { display: block; }
+    .dropdown-item {
+      display: block;
+      width: 100%;
+      padding: 0.4rem 0.75rem;
+      border: none;
+      background: none;
+      color: var(--text);
+      font-size: 0.8rem;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dropdown-item:hover { background: var(--surface2); }
+    .dropdown-item.danger { color: var(--danger); }
+    .dropdown-item.danger:hover { background: rgba(248,113,113,0.1); }
   </style>
 </head>
 <body>
-  <nav>
-    <a href="/" class="brand">Audible Backup</a>
-    <a href="/" class="active">Books</a>
-  </nav>
   <main>${content}</main>
   <div id="log-float">
     <div id="log-float-header">
       <span id="log-float-title">Operation Log</span>
-      <button id="log-float-minimize" title="Minimize">&#x2015;</button>
+      <div>
+        <button id="log-float-reload" style="display:none" onclick="location.reload()" title="Reload page to refresh data">Reload</button>
+        <button id="log-float-minimize" title="Minimize">&#x2015;</button>
+      </div>
     </div>
     <div id="progress-panel"></div>
   </div>
@@ -308,9 +330,10 @@ export function layout(title: string, content: string): string {
         });
       }
     });
-    // Reload page after operation completes to refresh data
+    // Show reload button after operation completes
     document.body.addEventListener('htmx:sseClose', function() {
-      setTimeout(() => location.reload(), 1500);
+      const reloadBtn = document.getElementById('log-float-reload');
+      if (reloadBtn) reloadBtn.style.display = 'inline-block';
     });
   </script>
 </body>
