@@ -2,66 +2,65 @@
 
 Backs up your Audible library: syncs the library list, downloads AAX audiobook
 files via [audible-cli](https://github.com/mkb79/audible-cli), and converts
-them to chapter-split, ID3-tagged MP3s with ffmpeg. Comes with both a CLI and
-a web UI with live progress streaming.
+them to chapter-split, ID3-tagged MP3s with ffmpeg — all driven from a web UI
+with live progress streaming.
 
-> **Security note:** the web UI has no authentication and includes destructive
-> actions (deleting downloaded files). Only run it on a trusted network or
-> inside the provided Docker setup — never expose port 3000 to the internet.
+The intended deployment is **sandboxed in Docker**: all data (AAX files,
+converted MP3s, database, Audible credentials) lives in named Docker volumes
+with no host filesystem access. You get your books out through the web UI's
+**Download** buttons — converted books as a ZIP of chapter MP3s, or the
+original AAX file.
 
-## Requirements
-
-- **Node 22** (uses `--experimental-strip-types` and `--experimental-sqlite`; no build step)
-- **ffmpeg** on PATH
-- **audible-cli** on PATH (`pipx install audible-cli`, then `audible quickstart` to log in)
-- Your Audible **activation bytes** (e.g. via `audible activation-bytes`)
-
-## Setup
+## Quick start (Docker)
 
 ```bash
-npm install
-cp .env.example .env   # then fill in AUDIBLE_ACTIVATION_BYTES and paths
-```
-
-Key `.env` variables:
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `AUDIBLE_ACTIVATION_BYTES` | Required for AAX decryption | — |
-| `AUDIBLE_TARGET_DIR` | Where AAX downloads go | `~/Music/audible-backup` |
-| `AUDIBLE_OUTPUT_DIR` | Where converted MP3s go | `~/Music/audible-backup/converted` |
-| `DB_PATH` | SQLite database location | `~/Music/audible-backup/audiobooks.db` |
-| `MP3_QUALITY` | LAME VBR quality (0 best – 9 smallest) | `4` |
-
-## Usage
-
-```bash
-npm run sync          # Download new audiobooks
-npm run convert       # Convert AAX to chapter-split MP3s
-npm run sync-convert  # Both in sequence
-npm run status        # Show library status
-npm run list          # List books ready for conversion
-npm run db-status     # Show database contents
-npm run server        # Start the web UI on http://localhost:3000
-npm test              # Run the test suite
-```
-
-See `node app.ts help` for all CLI commands and flags (single-book download,
-ignore/unignore, `--force`, custom directories).
-
-## Docker
-
-```bash
+cp .env.example .env   # set AUDIBLE_ACTIVATION_BYTES, WEB_USER, WEB_PASSWORD
 docker compose up -d
 ```
 
-`docker-compose.yml` mounts volumes for AAX files, converted output, the
-database, and your Audible auth directory (`~/.audible`). Run
-`audible quickstart` once inside the container (or mount an existing auth
-directory) before syncing.
+Then log in to Audible once inside the container (credentials persist in the
+`audible-auth` volume):
+
+```bash
+docker compose exec audible-backup audible quickstart
+```
+
+Open http://localhost:3000 — sync your library, download and convert books,
+and fetch the results via each book's Download button.
+
+### Environment variables
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `AUDIBLE_ACTIVATION_BYTES` | Required for AAX decryption (`audible activation-bytes`) | — |
+| `WEB_USER` / `WEB_PASSWORD` | Enables HTTP basic auth on the web UI when both are set | unset (no auth) |
+| `MP3_QUALITY` | LAME VBR quality (0 best – 9 smallest) | `4` |
+
+> **Security note:** without `WEB_USER`/`WEB_PASSWORD` the web UI is
+> unauthenticated and includes destructive actions (deleting downloaded
+> files). Set both, and never expose port 3000 directly to the internet.
+
+## Running outside Docker
+
+The CLI and server also run directly on a host with **Node 22**
+(`--experimental-strip-types`/`--experimental-sqlite`, no build step),
+**ffmpeg**, and **audible-cli** on PATH:
+
+```bash
+npm install
+cp .env.example .env   # AUDIBLE_TARGET_DIR etc. control where data goes
+npm run server         # Web UI on http://localhost:3000
+npm run sync           # CLI: download new audiobooks
+npm run convert        # CLI: convert AAX to chapter-split MP3s
+npm test               # Run the test suite
+```
+
+See `node app.ts help` for all CLI commands and flags.
 
 ## Limitations
 
 - Only AAX downloads are supported; AAXC-only titles (common on newer Audible
   accounts) are not handled yet.
 - Output is chapter-split MP3 only (no single-file M4B option).
+- ZIP downloads are store-only (MP3s don't compress) and capped at 4 GB per
+  archive.

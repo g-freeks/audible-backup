@@ -1,13 +1,16 @@
+# Sandboxed setup: all data lives in named Docker volumes — the container has
+# no access to the host filesystem. Get your converted books out through the
+# web UI's Download buttons.
 services:
   audible-backup:
     build: .
     ports:
       - "3000:3000"
     volumes:
-      - ${AUDIBLE_TARGET_DIR:-./data/aax}:/data/aax
-      - ${AUDIBLE_OUTPUT_DIR:-./data/converted}:/data/converted
-      - ${DB_DIR:-./data/db}:/data/db
-      - ${AUDIBLE_AUTH_DIR:-./data/audible-auth}:/root/.audible
+      - aax:/data/aax
+      - converted:/data/converted
+      - db:/data/db
+      - audible-auth:/root/.audible
     environment:
       - AUDIBLE_ACTIVATION_BYTES=${AUDIBLE_ACTIVATION_BYTES}
       - AUDIBLE_TARGET_DIR=/data/aax
@@ -15,4 +18,13 @@ services:
       - DB_PATH=/data/db/audiobooks.db
       - MP3_QUALITY=${MP3_QUALITY:-4}
       - WEB_PORT=3000
+      # Optional basic auth for the web UI; strongly recommended.
+      - WEB_USER=${WEB_USER:-}
+      - WEB_PASSWORD=${WEB_PASSWORD:-}
     restart: unless-stopped
+
+volumes:
+  aax:
+  converted:
+  db:
+  audible-auth:

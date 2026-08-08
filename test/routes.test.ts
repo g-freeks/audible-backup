@@ -466,3 +466,52 @@ describe("ASIN validation", () => {
     assert.equal(isIgnored("B000000009"), true);
   });
 });
+
+// --- Browser downloads ---
+
+describe("download endpoints", () => {
+  it("streams converted book as a valid ZIP", async () => {
+    const bookDir = path.join(tmpDir, "output", "My Book");
+    fs.mkdirSync(bookDir, { recursive: true });
+    fs.writeFileSync(path.join(bookDir, "01 - Intro.mp3"), "mp3 bytes");
+    markDownloaded("B00DOWNLD1", "Author", "My Book", "/none.aax");
+    markConverted("B00DOWNLD1", bookDir, 1);
+
+    const res = await app.request("/download/converted/B00DOWNLD1");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "application/zip");
+    assert.match(res.headers.get("content-disposition") || "", /My%20Book\.zip/);
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.readUInt32LE(0), 0x04034b50, "ZIP magic");
+  });
+
+  it("404s for converted download when book is not converted", async () => {
+    upsertBook("B00DOWNLD2", "Author", "Unconverted");
+    const res = await app.request("/download/converted/B00DOWNLD2");
+    assert.equal(res.status, 404);
+  });
+
+  it("streams the raw AAX file", async () => {
+    const aaxPath = path.join(tmpDir, "aax", "B00DOWNLD3.aax");
+    fs.writeFileSync(aaxPath, "aax bytes");
+    markDownloaded("B00DOWNLD3", "Author", "Raw Book", aaxPath);
+
+    const res = await app.request("/download/aax/B00DOWNLD3");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "aax bytes");
+    assert.equal(res.headers.get("content-length"), "9");
+  });
+
+  it("404s for AAX download when the file is missing", async () => {
+    markDownloaded("B00DOWNLD4", "Author", "Ghost", path.join(tmpDir, "gone.aax"));
+    const res = await app.request("/download/aax/B00DOWNLD4");
+    assert.equal(res.status, 404);
+  });
+
+  it("rejects invalid ASINs on download routes", async () => {
+    for (const url of ["/download/converted/nope", "/download/aax/nope"]) {
+      const res = await app.request(url);
+      assert.equal(res.status, 400, `expected 400 for ${url}`);
+    }
+  });
+});

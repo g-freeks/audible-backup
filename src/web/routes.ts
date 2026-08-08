@@ -14,6 +14,8 @@ import {
 } from "../operations.ts";
 import { sseStream } from "./sse.ts";
 import { booksPage } from "./templates/books.ts";
+import { zipStream, zipDirectoryEntries } from "./zip.ts";
+import { Readable } from "node:stream";
 
 export const routes = new Hono();
 
@@ -111,6 +113,60 @@ routes.post("/api/delete/:asin", (c) => {
   }
 
   return c.redirect("/");
+});
+
+// --- Downloads to the browser ---
+
+function attachmentHeaders(filename: string, contentType: string): Record<string, string> {
+  const fallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+  return {
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  };
+}
+
+routes.get("/download/converted/:asin", (c) => {
+  const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
+
+  const book = getAudiobookByAsin(asin);
+  if (!book?.converted_at || !book.output_path || !fs.existsSync(book.output_path)) {
+    return c.text("No converted files for this book", 404);
+  }
+
+  const entries = zipDirectoryEntries(book.output_path);
+  if (entries.length === 0) {
+    return c.text("No converted files for this book", 404);
+  }
+
+  const zipName = `${path.basename(book.output_path)}.zip`;
+  const body = Readable.toWeb(
+    Readable.from(zipStream(entries)),
+  ) as ReadableStream;
+  return new Response(body, {
+    headers: attachmentHeaders(zipName, "application/zip"),
+  });
+});
+
+routes.get("/download/aax/:asin", (c) => {
+  const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
+
+  const book = getAudiobookByAsin(asin);
+  if (!book?.aax_path || !fs.existsSync(book.aax_path)) {
+    return c.text("No AAX file for this book", 404);
+  }
+
+  const stat = fs.statSync(book.aax_path);
+  const body = Readable.toWeb(
+    fs.createReadStream(book.aax_path),
+  ) as ReadableStream;
+  return new Response(body, {
+    headers: {
+      ...attachmentHeaders(path.basename(book.aax_path), "audio/vnd.audible.aax"),
+      "Content-Length": String(stat.size),
+    },
+  });
 });
 
 // --- Sync ---

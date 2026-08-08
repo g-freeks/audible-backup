@@ -26,6 +26,14 @@ function statusBadge(status: string): string {
   }
 }
 
+function downloadAaxItem(asin: string): string {
+  return `<a class="dropdown-item" href="/download/aax/${asin}" title="Download the original encrypted AAX file">Download AAX</a>`;
+}
+
+function reconvertItem(asin: string): string {
+  return `<button class="dropdown-item" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"force":"true"}'>Re-convert</button>`;
+}
+
 function redownloadItem(asin: string): string {
   return `<button class="dropdown-item" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"asin":"${asin}","force":"true"}'>Re-download</button>`;
 }
@@ -54,17 +62,21 @@ function actionButtons(book: AudiobookRow, status: string): string {
       break;
     case "downloaded":
       primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}","force":"true"}' title="Re-download with overwrite">Re-download</button>`;
+      items.push(downloadAaxItem(asin));
       items.push(ignoreItem(asin));
       items.push(deleteItem(asin));
       break;
     case "convertible":
       primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Convert AAX to chapter-split MP3s">Convert</button>`;
+      items.push(downloadAaxItem(asin));
       items.push(redownloadItem(asin));
       items.push(ignoreItem(asin));
       items.push(deleteItem(asin));
       break;
     case "converted":
-      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"force":"true"}' title="Re-convert AAX to chapter-split MP3s">Re-convert</button>`;
+      primary = `<a class="btn btn-sm btn-primary split-main" href="/download/converted/${asin}" title="Download converted MP3s as a ZIP">Download</a>`;
+      items.push(reconvertItem(asin));
+      items.push(downloadAaxItem(asin));
       items.push(redownloadItem(asin));
       items.push(ignoreItem(asin));
       items.push(deleteItem(asin));

@@ -43,9 +43,11 @@ npm run db-reset      # Reset the database
 - `operations.ts` — Global singleton tracking the currently active operation (sync or convert), ensuring only one runs at a time.
 
 **Web layer** (`src/web/`):
-- `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). POST endpoints for sync/convert return HTMX fragments that connect to SSE streams.
+- `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). POST endpoints for sync/convert return HTMX fragments that connect to SSE streams. GET `/download/converted/:asin` streams a converted book as a ZIP; GET `/download/aax/:asin` streams the original AAX file. All ASIN params are validated against `^[A-Z0-9]{10}$`.
+- `zip.ts` — Dependency-free store-only streaming ZIP writer (no zip64; 4 GB cap) used for browser downloads.
 - `sse.ts` — Bridges `EventReporter` events to SSE responses for real-time log streaming to the browser.
 - `templates/` — Server-rendered HTML templates (dashboard, library, convert pages).
+- `server.ts` (repo root) — Enables HTTP basic auth when `WEB_USER` and `WEB_PASSWORD` are both set.
 
 **Key patterns**:
 - `AudibleLibrary` and `Converter` both accept a `ProgressReporter` via constructor injection — `consoleReporter` for CLI use, `EventReporter` for web use.
@@ -58,4 +60,4 @@ All config is in `.env` (see `.env.example`). Key variables: `AUDIBLE_ACTIVATION
 
 ## Docker
 
-`docker-compose.yml` mounts data volumes for AAX files, converted output, DB, and Audible auth. The container runs the web server.
+The intended deployment is fully sandboxed: `docker-compose.yml` uses **named Docker volumes** (aax, converted, db, audible-auth) — no host bind mounts. The container runs the web server, and users retrieve their books through the web UI's download endpoints rather than from the host filesystem.

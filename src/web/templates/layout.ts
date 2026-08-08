@@ -95,6 +95,7 @@ export function layout(title: string, content: string): string {
     .btn-primary:hover { background: var(--accent-hover); }
     .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    a.btn, a.dropdown-item { text-decoration: none; box-sizing: border-box; }
     .log-panel {
       background: #0a0c10;
       padding: 1rem;
