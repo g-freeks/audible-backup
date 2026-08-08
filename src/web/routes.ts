@@ -17,6 +17,12 @@ import { booksPage } from "./templates/books.ts";
 
 export const routes = new Hono();
 
+const ASIN_PATTERN = /^[A-Z0-9]{10}$/;
+
+function isValidAsin(asin: string): boolean {
+  return ASIN_PATTERN.test(asin);
+}
+
 // --- Pages ---
 
 routes.get("/", (c) => {
@@ -58,18 +64,21 @@ routes.get("/api/books", (c) => {
 
 routes.post("/api/ignore/:asin", (c) => {
   const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
   ignoreBook(asin);
   return c.redirect("/");
 });
 
 routes.post("/api/unignore/:asin", (c) => {
   const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
   unignoreBook(asin);
   return c.redirect("/");
 });
 
 routes.post("/api/delete/:asin", (c) => {
   const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
   const book = getAudiobookByAsin(asin);
 
   if (book) {
@@ -150,6 +159,12 @@ routes.post("/library/download", async (c) => {
   let asins: string[] = [];
   if (body.asin) {
     asins = Array.isArray(body.asin) ? body.asin as string[] : [body.asin as string];
+    if (!asins.every(isValidAsin)) {
+      return c.html(
+        '<div class="log-panel"><div class="log-line error">Invalid ASIN</div></div>',
+        400,
+      );
+    }
   }
   const force = body.force === "true";
 
@@ -257,6 +272,12 @@ routes.post("/convert/all", async (c) => {
 
 routes.post("/convert/:asin", async (c) => {
   const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) {
+    return c.html(
+      '<div class="log-panel"><div class="log-line error">Invalid ASIN</div></div>',
+      400,
+    );
+  }
 
   if (isOperationRunning()) {
     return c.html(

@@ -102,6 +102,28 @@ export class AudibleLibrary {
     }
   }
 
+  /** Find the actual .aax file for an ASIN — audible-cli filenames include more than the bare ASIN. */
+  private findAaxFile(asin: string): string | undefined {
+    try {
+      const files = fs.readdirSync(this.targetDir, {
+        recursive: true,
+        withFileTypes: true,
+      });
+      for (const file of files) {
+        if (
+          file.isFile() &&
+          file.name.endsWith(".aax") &&
+          file.name.includes(asin)
+        ) {
+          return path.join(file.parentPath, file.name);
+        }
+      }
+    } catch {
+      // target dir may not be readable
+    }
+    return undefined;
+  }
+
   private pipeProcessOutput(proc: ChildProcess, asin?: string): void {
     let lastPct = -1;
     proc.stdout?.on("data", (data: Buffer) => {
@@ -182,7 +204,8 @@ export class AudibleLibrary {
           resolve(false);
         } else if (code === 0) {
           this.reporter.log(`Successfully downloaded: ${title}`);
-          const aaxPath = path.join(this.targetDir, `${asin}.aax`);
+          const aaxPath =
+            this.findAaxFile(asin) || path.join(this.targetDir, `${asin}.aax`);
           markDownloaded(asin, author, title, aaxPath);
           resolve(true);
         } else {
