@@ -73,6 +73,16 @@ Until the first user is created, the app runs in legacy single-user mode
 using the `.env`-configured paths. See `node app.ts help` for all CLI
 commands and flags.
 
+## Legal
+
+This tool is for **personal backups of audiobooks you own**. It uses your
+own Audible account and your own activation bytes to convert your purchases
+into a format you control — the same personal-use decryption that tools like
+audible-cli and ffmpeg support. Do not use it to share, distribute, or
+circumvent DRM on content you have not purchased, and be aware that removing
+DRM may be restricted by law in your jurisdiction and by Audible's terms of
+service.
+
 ## Limitations
 
 - Only AAX downloads are supported; AAXC-only titles (common on newer Audible
