@@ -1,22 +1,22 @@
 {
-  "name": "audible_backup_tool",
+  "name": "audible_backup",
   "version": "1.0.0",
   "description": "Sync an Audible library, download AAX files, and convert them to chapter-split MP3s",
   "main": "app.ts",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
-    "sync": "node --experimental-strip-types --experimental-sqlite app.ts sync",
-    "convert": "node --experimental-strip-types --experimental-sqlite app.ts convert",
-    "sync-convert": "node --experimental-strip-types --experimental-sqlite app.ts sync-convert",
-    "status": "node --experimental-strip-types --experimental-sqlite app.ts status",
-    "list": "node --experimental-strip-types --experimental-sqlite app.ts list",
-    "help": "node --experimental-strip-types --experimental-sqlite app.ts help",
-    "db-status": "node --experimental-strip-types --experimental-sqlite app.ts db-status",
-    "db-reset": "node --experimental-strip-types --experimental-sqlite app.ts db-reset",
-    "test": "node --experimental-strip-types --experimental-sqlite --test test/*.test.ts",
-    "server": "node --experimental-strip-types --experimental-sqlite server.ts"
+    "sync": "node app.ts sync",
+    "convert": "node app.ts convert",
+    "sync-convert": "node app.ts sync-convert",
+    "status": "node app.ts status",
+    "list": "node app.ts list",
+    "help": "node app.ts help",
+    "db-status": "node app.ts db-status",
+    "db-reset": "node app.ts db-reset",
+    "test": "node --test test/*.test.ts",
+    "server": "node server.ts"
   },
   "keywords": [],
   "author": "",

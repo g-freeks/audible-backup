@@ -8,14 +8,14 @@ Audible Backup Tool syncs an Audible library, downloads AAX audiobook files via 
 
 ## Commands
 
-All commands require Node 22+ (uses `--experimental-strip-types` and `--experimental-sqlite`).
+All commands require Node 24+ (native type stripping and `node:sqlite`, no flags needed).
 
 ```bash
 # Run tests (Node built-in test runner)
 npm test
 
 # Run a single test file
-node --experimental-strip-types --experimental-sqlite --test test/converter.test.ts
+node --test test/converter.test.ts
 
 # Start the web server (Hono on port 3000)
 npm run server
@@ -32,7 +32,7 @@ npm run db-reset      # Reset the database
 
 ## Architecture
 
-**Runtime**: Pure TypeScript executed directly by Node 22 with `--experimental-strip-types` (no build step). Uses Node's built-in `node:sqlite` (WAL mode) for persistence.
+**Runtime**: Pure TypeScript executed directly by Node 24 via native type stripping (no build step). Uses Node's built-in `node:sqlite` (WAL mode) for persistence.
 
 **Core modules** (`src/`):
 - `config.ts` — Loads `.env` manually (no dotenv dependency), exports a `config` object. Environment variables override `.env` values.
