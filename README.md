@@ -56,8 +56,8 @@ bar; switching users is a dropdown away.
 
 ## Running outside Docker
 
-The CLI and server also run directly on a host with **Node 22**
-(`--experimental-strip-types`/`--experimental-sqlite`, no build step),
+The CLI and server also run directly on a host with **Node 24+**
+(TypeScript runs natively via type stripping — no build step, no flags),
 **ffmpeg**, and **audible-cli** on PATH:
 
 ```bash

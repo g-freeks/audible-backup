@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -21,4 +21,4 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["node", "--experimental-strip-types", "--experimental-sqlite", "server.ts"]
+CMD ["node", "server.ts"]
