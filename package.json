@@ -1,8 +1,11 @@
 {
   "name": "audible_backup_tool",
   "version": "1.0.0",
-  "description": "",
+  "description": "Sync an Audible library, download AAX files, and convert them to chapter-split MP3s",
   "main": "app.ts",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "sync": "node --experimental-strip-types --experimental-sqlite app.ts sync",
     "convert": "node --experimental-strip-types --experimental-sqlite app.ts convert",

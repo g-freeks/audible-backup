@@ -431,3 +431,38 @@ describe("ignore/unignore round-trip through API", () => {
     assert.equal(data.downloaded, 2);
   });
 });
+
+// --- ASIN validation ---
+
+describe("ASIN validation", () => {
+  it("rejects invalid ASINs on ignore, delete, and convert routes", async () => {
+    for (const url of [
+      "/api/ignore/not-an-asin",
+      "/api/unignore/lowercase1",
+      "/api/delete/..%2F..%2Fetc",
+      "/convert/short",
+    ]) {
+      const res = await app.request(url, { method: "POST" });
+      assert.equal(res.status, 400, `expected 400 for ${url}`);
+    }
+  });
+
+  it("rejects invalid ASINs in download form body", async () => {
+    const body = new URLSearchParams({ asin: "../../etc/passwd" });
+    const res = await app.request("/library/download", {
+      method: "POST",
+      body,
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("still accepts a valid ASIN on ignore", async () => {
+    upsertBook("B000000009", "Author", "Title");
+    const res = await app.request("/api/ignore/B000000009", {
+      method: "POST",
+      redirect: "manual",
+    });
+    assert.equal(res.status, 302);
+    assert.equal(isIgnored("B000000009"), true);
+  });
+});

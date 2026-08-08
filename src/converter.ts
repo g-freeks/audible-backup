@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { config } from "./config.ts";
-import { isConverted, markConverted, getIgnoredAsins } from "./db.ts";
+import { isConverted, markConverted, getIgnoredAsins, getAudiobookByAsin } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 
 export interface ChapterInfo {
@@ -198,6 +198,7 @@ export class Converter {
     chapterData: ChapterData,
     bookDir: string,
     asin?: string,
+    tags?: { album?: string; artist?: string },
   ): Promise<boolean> {
     const chapters = this.flattenChapters(chapterData.content_metadata.chapter_info.chapters);
 
@@ -236,7 +237,12 @@ export class Converter {
       this.reporter.log(
         `  [${i + 1}/${chapters.length}] Splitting: ${chapterTitle}`,
       );
-      const success = await this.splitChapter(mp3File, outputFile, chapter);
+      const success = await this.splitChapter(mp3File, outputFile, chapter, {
+        title: chapterTitle,
+        track: `${i + 1}/${chapters.length}`,
+        album: tags?.album,
+        artist: tags?.artist,
+      });
       if (success) {
         successCount++;
       }
@@ -256,10 +262,19 @@ export class Converter {
     inputFile: string,
     outputFile: string,
     chapter: ChapterInfo,
+    tags?: { title?: string; track?: string; album?: string; artist?: string },
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const startTime = this.formatTime(chapter.start_offset_ms);
       const duration = this.formatTime(chapter.length_ms);
+
+      const metadataArgs: string[] = [];
+      if (tags) {
+        for (const [key, value] of Object.entries(tags)) {
+          if (value) metadataArgs.push("-metadata", `${key}=${value}`);
+        }
+        if (metadataArgs.length > 0) metadataArgs.push("-id3v2_version", "3");
+      }
 
       const ffmpegProcess = spawn(
         "ffmpeg",
@@ -272,6 +287,7 @@ export class Converter {
           duration,
           "-c",
           "copy",
+          ...metadataArgs,
           "-y",
           outputFile,
         ],
@@ -413,11 +429,13 @@ export class Converter {
         return false;
       }
 
+      const author = getAudiobookByAsin(asin)?.author || undefined;
       const splittingSuccess = await this.splitIntoChapters(
         tempMp3,
         chapterData,
         bookDir,
         asin,
+        { album: bookTitle || undefined, artist: author },
       );
 
       if (fs.existsSync(bookCover)) {
