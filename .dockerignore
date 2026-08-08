@@ -1,8 +1,15 @@
 node_modules
 .env
 .git
+.github
 .gitignore
+.claude
+.idea
 data/
+test/
 *.db
 *.db-wal
 *.db-shm
+*.md
+LICENSE
+docker-compose.yml
