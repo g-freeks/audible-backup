@@ -16,8 +16,13 @@ or the original AAX file.
 
 ## Quick start (Docker)
 
+CI publishes a multi-arch image (amd64/arm64) to GitHub Container Registry on
+every push to `main`:
+
 ```bash
-docker compose up -d
+docker compose up -d          # pulls ghcr.io/g-freeks/audible_backup:latest
+# or build from source instead:
+docker compose build && docker compose up -d
 ```
 
 Open http://localhost:3000 — you'll be asked to create the first user
