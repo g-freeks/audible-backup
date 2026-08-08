@@ -48,7 +48,7 @@ npm run db-reset      # Reset the database
 - `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). A session middleware resolves the current user from a cookie (in-memory sessions in `sessions.ts`) and wraps handlers in `runWithUser`; `/login`, `/user/switch`, and `/user/add` are public. POST endpoints for sync/convert return HTMX fragments that connect to SSE streams (streams are only visible to the operation's owner). GET `/download/converted/:asin` streams a converted book as a ZIP; GET `/download/aax/:asin` streams the original AAX file. All ASIN params are validated against `^[A-Z0-9]{10}$`.
 - `zip.ts` — Dependency-free store-only streaming ZIP writer (no zip64; 4 GB cap) used for browser downloads.
 - `sse.ts` — Bridges `EventReporter` events to SSE responses for real-time log streaming to the browser.
-- `templates/` — Server-rendered HTML templates (dashboard, library, convert pages).
+- `templates/` — Server-rendered HTML templates. `html.ts` provides an auto-escaping `html` tagged template (`raw()` for trusted fragments); `components.ts` holds shared badge/progress fragments used by pages, SSE events, and OOB swaps. Templates contain no inline JS — all client behavior lives in `static/app.js` (delegated listeners, so it survives HTMX swaps), which enables the strict CSP set in `routes.ts` via `secureHeaders`.
 - `server.ts` (repo root) — Enables HTTP basic auth when `WEB_USER` and `WEB_PASSWORD` are both set.
 
 **Key patterns**:

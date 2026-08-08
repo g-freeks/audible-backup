@@ -1,9 +1,7 @@
 import { layout, type UserNav } from "./layout.ts";
 import { getAllBooks, type AudiobookRow } from "../../db.ts";
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+import { escapeHtml } from "./html.ts";
+import { statusBadge } from "./components.ts";
 
 function getStatus(book: AudiobookRow, convertibleAsins: Set<string>): string {
   if (book.ignored_at) return "ignored";
@@ -12,18 +10,6 @@ function getStatus(book: AudiobookRow, convertibleAsins: Set<string>): string {
   if (!book.converted_at && convertibleAsins.has(book.asin)) return "convertible";
   if (!book.converted_at) return "downloaded";
   return "converted";
-}
-
-function statusBadge(status: string): string {
-  switch (status) {
-    case "ignored": return '<span class="badge badge-danger">Ignored</span>';
-    case "not-downloadable": return '<span class="badge badge-danger">Not Downloadable</span>';
-    case "not-downloaded": return '<span class="badge badge-muted">Not Downloaded</span>';
-    case "convertible": return '<span class="badge badge-warn">Ready</span>';
-    case "downloaded": return '<span class="badge badge-warn">Downloaded</span>';
-    case "converted": return '<span class="badge badge-success">Converted</span>';
-    default: return "";
-  }
 }
 
 function downloadAaxItem(asin: string): string {
@@ -39,11 +25,11 @@ function redownloadItem(asin: string): string {
 }
 
 function ignoreItem(asin: string): string {
-  return `<button class="dropdown-item" onclick="fetch('/api/ignore/${asin}',{method:'POST'}).then(()=>location.reload())">Ignore</button>`;
+  return `<button class="dropdown-item" data-action-url="/api/ignore/${asin}">Ignore</button>`;
 }
 
 function deleteItem(asin: string): string {
-  return `<button class="dropdown-item danger" onclick="if(confirm('Delete files for this book?'))fetch('/api/delete/${asin}',{method:'POST'}).then(()=>location.reload())">Delete</button>`;
+  return `<button class="dropdown-item danger" data-action-url="/api/delete/${asin}" data-confirm="Delete files for this book?">Delete</button>`;
 }
 
 function actionButtons(book: AudiobookRow, status: string): string {
@@ -82,7 +68,7 @@ function actionButtons(book: AudiobookRow, status: string): string {
       items.push(deleteItem(asin));
       break;
     case "ignored":
-      primary = `<button class="btn btn-sm btn-primary split-main" onclick="fetch('/api/unignore/${asin}',{method:'POST'}).then(()=>location.reload())" title="Remove from ignored list">Unignore</button>`;
+      primary = `<button class="btn btn-sm btn-primary split-main" data-action-url="/api/unignore/${asin}" title="Remove from ignored list">Unignore</button>`;
       items.push(deleteItem(asin));
       break;
   }
@@ -90,7 +76,7 @@ function actionButtons(book: AudiobookRow, status: string): string {
   if (!primary) return "";
   if (items.length === 0) return primary;
 
-  return `<div class="action-dropdown"><div class="split-btn">${primary}<button class="btn btn-sm btn-primary split-caret" type="button" onclick="this.closest('.action-dropdown').classList.toggle('open')">&#9662;</button></div><div class="dropdown-menu">${items.join("")}</div></div>`;
+  return `<div class="action-dropdown"><div class="split-btn">${primary}<button class="btn btn-sm btn-primary split-caret" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false" aria-label="More actions">&#9662;</button></div><div class="dropdown-menu">${items.join("")}</div></div>`;
 }
 
 export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): string {
@@ -111,7 +97,7 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
     { value: "ignored", label: "Ignored" },
   ];
   const content = `
-    <div class="library-layout">
+    <div class="library-layout" hx-get="/" hx-select=".library-layout" hx-swap="outerHTML" hx-trigger="refresh-books from:body">
       <h1>Books</h1>
 
       <div class="actions">
@@ -138,7 +124,7 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
         <input type="text" id="search-input" placeholder="Search by title, author, or ASIN..." autocomplete="off">
         <div class="filter-pills">
           ${statusDefs.map(s =>
-            `<button class="filter-btn active" data-status="${s.value}">${s.label} (${statusCounts[s.value] || 0})</button>`
+            `<button class="filter-btn active" data-status="${s.value}" aria-pressed="true">${s.label} (${statusCounts[s.value] || 0})</button>`
           ).join("\n          ")}
         </div>
       </div>
@@ -148,7 +134,7 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
         <table id="books-table">
           <thead>
             <tr>
-              <th><input type="checkbox" id="select-all"></th>
+              <th><input type="checkbox" id="select-all" aria-label="Select all visible books"></th>
               <th class="sortable" data-sort-col="1" data-sort-type="string">Title</th>
               <th class="sortable" data-sort-col="2" data-sort-type="string">Author</th>
               <th class="sortable" data-sort-col="3" data-sort-type="string">ASIN</th>
@@ -168,7 +154,7 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
               const chapters = book.chapter_count ?? "";
               const searchData = `${title} ${author} ${book.asin}`.toLowerCase();
               return `<tr data-status="${status}" data-search="${escapeHtml(searchData)}">
-                <td><input type="checkbox" name="asin" value="${book.asin}"></td>
+                <td><input type="checkbox" name="asin" value="${book.asin}" aria-label="Select ${title}"></td>
                 <td data-sort-val="${escapeHtml(title.toLowerCase())}">${title}</td>
                 <td data-sort-val="${escapeHtml(author.toLowerCase())}">${author}</td>
                 <td data-sort-val="${book.asin}"><code>${book.asin}</code></td>
@@ -184,92 +170,6 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
 
     </div>
 
-    <script>
-      const searchInput = document.getElementById('search-input');
-      const tbody = document.querySelector('#books-table tbody');
-      const allStatuses = ['not-downloaded','not-downloadable','downloaded','convertible','converted','ignored'];
-      const activeStatuses = new Set(allStatuses);
-
-      function getRows() {
-        return Array.from(document.querySelectorAll('#books-table tbody tr[data-status]'));
-      }
-
-      function applyFilters() {
-        const query = searchInput?.value.toLowerCase() || '';
-        getRows().forEach(row => {
-          const matchesSearch = !query || row.dataset.search.includes(query);
-          const matchesFilter = activeStatuses.has(row.dataset.status);
-          row.style.display = (matchesSearch && matchesFilter) ? '' : 'none';
-        });
-      }
-
-      searchInput?.addEventListener('input', applyFilters);
-
-      // Status filter pills (inline, multi-select)
-      document.querySelectorAll('.filter-btn[data-status]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const status = btn.dataset.status;
-          if (btn.classList.contains('active')) {
-            btn.classList.remove('active');
-            activeStatuses.delete(status);
-          } else {
-            btn.classList.add('active');
-            activeStatuses.add(status);
-          }
-          applyFilters();
-        });
-      });
-
-      // Select-all checkbox (only affects visible rows)
-      document.getElementById('select-all')?.addEventListener('change', (e) => {
-        getRows().forEach(row => {
-          if (row.style.display !== 'none') {
-            const cb = row.querySelector('input[name="asin"]');
-            if (cb) cb.checked = e.target.checked;
-          }
-        });
-      });
-
-      // Column sorting
-      const statusOrder = { 'not-downloaded': 0, 'not-downloadable': 1, 'convertible': 2, 'downloaded': 3, 'converted': 4, 'ignored': 5 };
-      let sortCol = null;
-      let sortDir = 'asc';
-
-      document.querySelectorAll('th.sortable').forEach(th => {
-        th.addEventListener('click', () => {
-          const col = parseInt(th.dataset.sortCol);
-          const type = th.dataset.sortType;
-
-          if (sortCol === col) {
-            sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-          } else {
-            sortCol = col;
-            sortDir = 'asc';
-          }
-
-          document.querySelectorAll('th.sortable').forEach(h => h.classList.remove('asc', 'desc'));
-          th.classList.add(sortDir);
-
-          const rows = getRows();
-          rows.sort((a, b) => {
-            const aVal = a.children[col]?.dataset.sortVal || '';
-            const bVal = b.children[col]?.dataset.sortVal || '';
-            let cmp = 0;
-            if (type === 'number') {
-              cmp = (parseFloat(aVal) || 0) - (parseFloat(bVal) || 0);
-            } else if (type === 'status') {
-              cmp = (statusOrder[aVal] ?? 99) - (statusOrder[bVal] ?? 99);
-            } else {
-              cmp = aVal.localeCompare(bVal);
-            }
-            return sortDir === 'asc' ? cmp : -cmp;
-          });
-
-          rows.forEach(row => tbody.appendChild(row));
-          applyFilters();
-        });
-      });
-    </script>
   `;
 
   return layout("Books", content, userNav);

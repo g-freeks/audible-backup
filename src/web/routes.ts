@@ -19,7 +19,10 @@ import type { UserNav } from "./templates/layout.ts";
 import { zipStream, zipDirectoryEntries } from "./zip.ts";
 import { Readable } from "node:stream";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { secureHeaders } from "hono/secure-headers";
 import type { Context } from "hono";
+import { escapeHtml } from "./templates/html.ts";
+import { queuedSwap } from "./templates/components.ts";
 import {
   hasUsers,
   listUsers,
@@ -36,6 +39,24 @@ import {
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 
 export const routes = new Hono();
+
+// Strict CSP is possible because all client JS lives in /static/app.js —
+// no inline handlers or script blocks. Inline <style> needs unsafe-inline.
+routes.use(
+  "*",
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'self'"],
+    },
+  }),
+);
 
 const ASIN_PATTERN = /^[A-Z0-9]{10}$/;
 
@@ -418,9 +439,7 @@ routes.post("/library/download", async (c) => {
     )
     .finally(() => clearOperation());
 
-  const oobSwaps = books.map((b) =>
-    `<span id="status-${escapeHtml(b.asin)}" hx-swap-oob="true"><span class="badge badge-muted">Queued</span></span>`
-  ).join("");
+  const oobSwaps = books.map((b) => queuedSwap(b.asin)).join("");
 
   return c.html(logPanel("/library/download/stream", "Download started...", oobSwaps));
 });
@@ -460,9 +479,7 @@ routes.post("/convert/all", async (c) => {
 
     const ignoredAsins = getIgnoredAsins();
     const queuedBooks = converter.findBookFiles().filter((b) => !ignoredAsins.has(b.asin) && (force || !isConverted(b.asin)));
-    const oobSwaps = queuedBooks.map((b) =>
-      `<span id="status-${escapeHtml(b.asin)}" hx-swap-oob="true"><span class="badge badge-muted">Queued</span></span>`
-    ).join("");
+    const oobSwaps = queuedBooks.map((b) => queuedSwap(b.asin)).join("");
 
     converter
       .convertAll()
@@ -570,10 +587,6 @@ routes.get("/convert/stream", (c) => {
   }
   return sseStream(c, op.reporter);
 });
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 function logPanel(streamUrl: string, label: string, extra: string = ""): string {
   return `

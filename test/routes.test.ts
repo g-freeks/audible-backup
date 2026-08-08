@@ -631,3 +631,35 @@ describe("multi-tenant mode", () => {
     assert.equal(after.headers.get("location"), "/login");
   });
 });
+
+// --- CSP and inline-JS-free UI ---
+
+describe("UI security headers", () => {
+  it("serves a strict Content-Security-Policy", async () => {
+    const res = await app.request("/");
+    const csp = res.headers.get("content-security-policy") || "";
+    assert.match(csp, /script-src 'self'/);
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+  });
+
+  it("renders no inline event handlers or script blocks", async () => {
+    markDownloaded("B000000001", "Author", "Book <One>", "/a.aax");
+    ignoreBook("B000000001");
+    markDownloaded("B000000002", "A2", "T2", "/b.aax");
+    const res = await app.request("/");
+    const html = await res.text();
+    assert.ok(!html.includes("onclick="), "no inline onclick handlers");
+    assert.ok(!/<script(?![^>]*src=)/.test(html), "no inline script blocks");
+    assert.ok(html.includes('src="/static/app.js"'), "loads external app.js");
+    assert.ok(html.includes("data-action-url"), "actions use data attributes");
+  });
+
+  it("escapes book titles in the table", async () => {
+    markDownloaded("B000000003", "Author", 'Evil <img src=x onerror=alert(1)> "Book"', "/c.aax");
+    const res = await app.request("/");
+    const html = await res.text();
+    assert.ok(!html.includes("<img src=x"), "raw HTML from title not emitted");
+    assert.ok(html.includes("&lt;img src=x"), "title is escaped");
+  });
+});

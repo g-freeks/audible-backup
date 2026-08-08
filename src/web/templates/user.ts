@@ -1,8 +1,5 @@
 import { layout } from "./layout.ts";
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+import { escapeHtml } from "./html.ts";
 
 export interface UserListEntry {
   name: string;
