@@ -16,6 +16,7 @@ import {
   ignoreBook,
   unignoreBook,
 } from "./src/db.ts";
+import { getUser, listUsers, runWithUser, userDirs } from "./src/users.ts";
 
 function requireAudibleCli(): void {
   try {
@@ -56,6 +57,8 @@ Commands:
   help                Show this help message
 
 Options:
+  --user <name>       Run as a registered user (their directories, database,
+                      Audible auth, and activation bytes)
   --dir <path>        Target directory for downloads (default from .env)
   --output <path>     Output directory for converted files (default from .env)
   --activation-bytes  Audible activation bytes (default from .env)
@@ -77,13 +80,32 @@ Examples:
     return;
   }
 
-  const targetDir = getArg(args, "--dir") || config.targetDir;
-  const outputDir = getArg(args, "--output") || config.outputDir;
+  const userArg = getArg(args, "--user");
+  let user;
+  if (userArg) {
+    user = getUser(userArg);
+    if (!user) {
+      const names = listUsers().map((u) => u.name).join(", ") || "(none)";
+      console.error(`Unknown user: ${userArg}. Registered users: ${names}`);
+      process.exit(1);
+    }
+  }
+  const dirs = user ? userDirs(user.name) : undefined;
+
+  const targetDir = getArg(args, "--dir") || dirs?.targetDir || config.targetDir;
+  const outputDir = getArg(args, "--output") || dirs?.outputDir || config.outputDir;
   const activationBytes =
-    getArg(args, "--activation-bytes") || config.activationBytes;
+    getArg(args, "--activation-bytes") ||
+    user?.activationBytes ||
+    config.activationBytes;
   const force = args.includes("--force");
 
+  const run = user
+    ? <T>(fn: () => Promise<T> | T) => runWithUser(user.name, fn)
+    : <T>(fn: () => Promise<T> | T) => fn();
+
   try {
+    await run(async () => {
     switch (command) {
       case "sync": {
         requireAudibleCli();
@@ -213,6 +235,7 @@ Examples:
         );
         process.exit(1);
     }
+    });
   } catch (error) {
     console.error("Error:", error instanceof Error ? error.message : error);
     process.exit(1);

@@ -1,4 +1,4 @@
-import { layout } from "./layout.ts";
+import { layout, type UserNav } from "./layout.ts";
 import { getAllBooks, type AudiobookRow } from "../../db.ts";
 
 function escapeHtml(s: string): string {
@@ -90,10 +90,10 @@ function actionButtons(book: AudiobookRow, status: string): string {
   if (!primary) return "";
   if (items.length === 0) return primary;
 
-  return `<div class="action-dropdown"><div class="split-btn">${primary}<button class="btn btn-sm btn-primary split-caret" type="button" onclick="event.stopPropagation();this.closest('.action-dropdown').classList.toggle('open')">&#9662;</button></div><div class="dropdown-menu">${items.join("")}</div></div>`;
+  return `<div class="action-dropdown"><div class="split-btn">${primary}<button class="btn btn-sm btn-primary split-caret" type="button" onclick="this.closest('.action-dropdown').classList.toggle('open')">&#9662;</button></div><div class="dropdown-menu">${items.join("")}</div></div>`;
 }
 
-export function booksPage(convertibleAsins: Set<string>): string {
+export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): string {
   const books = getAllBooks();
   const hasNotDownloaded = books.some((b) => !b.downloaded_at && !b.ignored_at && !b.not_downloadable_at);
 
@@ -220,13 +220,6 @@ export function booksPage(convertibleAsins: Set<string>): string {
         });
       });
 
-      // Close action dropdowns on outside click
-      document.addEventListener('click', (e) => {
-        if (!e.target.closest('.split-caret')) {
-          document.querySelectorAll('.action-dropdown.open').forEach(d => d.classList.remove('open'));
-        }
-      });
-
       // Select-all checkbox (only affects visible rows)
       document.getElementById('select-all')?.addEventListener('change', (e) => {
         getRows().forEach(row => {
@@ -279,5 +272,5 @@ export function booksPage(convertibleAsins: Set<string>): string {
     </script>
   `;
 
-  return layout("Books", content);
+  return layout("Books", content, userNav);
 }

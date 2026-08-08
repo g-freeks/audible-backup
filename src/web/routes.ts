@@ -14,8 +14,26 @@ import {
 } from "../operations.ts";
 import { sseStream } from "./sse.ts";
 import { booksPage } from "./templates/books.ts";
+import { loginPage, settingsPage } from "./templates/user.ts";
+import type { UserNav } from "./templates/layout.ts";
 import { zipStream, zipDirectoryEntries } from "./zip.ts";
 import { Readable } from "node:stream";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import type { Context } from "hono";
+import {
+  hasUsers,
+  listUsers,
+  getUser,
+  addUser,
+  updateUser,
+  verifyPassword,
+  userHasPassword,
+  runWithUser,
+  currentUser,
+  currentUserName,
+  userDirs,
+} from "../users.ts";
+import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 
 export const routes = new Hono();
 
@@ -25,21 +43,155 @@ function isValidAsin(asin: string): boolean {
   return ASIN_PATTERN.test(asin);
 }
 
+// --- Multi-tenant session handling ---
+// When no users exist the app runs in legacy single-user mode (env-based
+// paths, no login). As soon as the first user is created, every request
+// must carry a valid session for one of the registered users.
+
+const PUBLIC_PATHS = new Set(["/login", "/user/switch", "/user/add"]);
+
+routes.use("*", async (c, next) => {
+  if (PUBLIC_PATHS.has(c.req.path)) return next();
+  if (!hasUsers()) return next();
+
+  const userName = getSessionUser(getCookie(c, "session"));
+  const user = userName ? getUser(userName) : undefined;
+  if (!user) return c.redirect("/login");
+  return runWithUser(user.name, () => next());
+});
+
+function userListEntries() {
+  return listUsers().map((u) => ({ name: u.name, hasPassword: userHasPassword(u) }));
+}
+
+/** Per-request paths and activation bytes: user-scoped or legacy config. */
+function requestPaths() {
+  const user = currentUser();
+  if (user) {
+    const dirs = userDirs(user.name);
+    return {
+      targetDir: dirs.targetDir,
+      outputDir: dirs.outputDir,
+      activationBytes: user.activationBytes || config.activationBytes,
+    };
+  }
+  return {
+    targetDir: config.targetDir,
+    outputDir: config.outputDir,
+    activationBytes: config.activationBytes,
+  };
+}
+
+function buildUserNav(): UserNav | undefined {
+  const name = currentUserName();
+  if (!name) return undefined;
+  return {
+    current: name,
+    others: userListEntries().filter((u) => u.name !== name),
+  };
+}
+
+function startUserSession(c: Context, userName: string): void {
+  const token = createSession(userName);
+  setCookie(c, "session", token, {
+    httpOnly: true,
+    sameSite: "Lax",
+    path: "/",
+  });
+}
+
+// --- User routes ---
+
+routes.get("/login", (c) => {
+  const preselect = c.req.query("user");
+  return c.html(loginPage(userListEntries(), undefined, preselect));
+});
+
+routes.post("/user/switch", async (c) => {
+  const body = await c.req.parseBody();
+  const name = String(body.name || "");
+  const password = String(body.password || "");
+
+  const user = getUser(name);
+  if (!user) {
+    return c.html(loginPage(userListEntries(), "Unknown user"), 400);
+  }
+  if (userHasPassword(user) && !verifyPassword(user, password)) {
+    return c.html(loginPage(userListEntries(), "Wrong password", name), 401);
+  }
+
+  startUserSession(c, user.name);
+  return c.redirect("/");
+});
+
+routes.post("/user/add", async (c) => {
+  const body = await c.req.parseBody();
+  const name = String(body.name || "").trim();
+  const password = String(body.password || "");
+  const activationBytes = String(body.activation_bytes || "");
+
+  try {
+    const user = addUser(name, password || undefined, activationBytes || undefined);
+    startUserSession(c, user.name);
+    return c.redirect("/");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.html(loginPage(userListEntries(), msg), 400);
+  }
+});
+
+routes.post("/user/logout", (c) => {
+  destroySession(getCookie(c, "session"));
+  deleteCookie(c, "session", { path: "/" });
+  return c.redirect("/login");
+});
+
+routes.get("/user/settings", (c) => {
+  const user = currentUser();
+  if (!user) return c.redirect("/login");
+  return c.html(
+    settingsPage(user.name, user.activationBytes || "", userHasPassword(user)),
+  );
+});
+
+routes.post("/user/settings", async (c) => {
+  const user = currentUser();
+  if (!user) return c.redirect("/login");
+
+  const body = await c.req.parseBody();
+  updateUser(user.name, {
+    activationBytes: String(body.activation_bytes ?? ""),
+    password: String(body.password || "") || undefined,
+    removePassword: body.remove_password === "true",
+  });
+
+  const updated = getUser(user.name)!;
+  return c.html(
+    settingsPage(
+      updated.name,
+      updated.activationBytes || "",
+      userHasPassword(updated),
+      "Settings saved",
+    ),
+  );
+});
+
 // --- Pages ---
 
 routes.get("/", (c) => {
+  const paths = requestPaths();
   let convertibleAsins = new Set<string>();
   try {
     const converter = new Converter(
-      config.targetDir,
-      config.outputDir,
-      config.activationBytes,
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
     );
     convertibleAsins = new Set(converter.findBookFiles().map((b) => b.asin));
   } catch {
     // activation bytes or target dir may not be configured
   }
-  return c.html(booksPage(convertibleAsins));
+  return c.html(booksPage(convertibleAsins, buildUserNav()));
 });
 routes.get("/library", (c) => c.redirect("/"));
 routes.get("/convert", (c) => c.redirect("/"));
@@ -181,7 +333,7 @@ routes.post("/library/sync", (c) => {
 
   const reporter = startOperation("sync");
 
-  const library = new AudibleLibrary(config.targetDir, reporter);
+  const library = new AudibleLibrary(requestPaths().targetDir, reporter);
   library
     .sync()
     .then(() => reporter.done({ success: true, summary: "Sync complete" }))
@@ -193,9 +345,14 @@ routes.post("/library/sync", (c) => {
   return c.html(logPanel("/library/sync/stream", "Sync started..."));
 });
 
+/** An operation's stream is only visible to the user who started it. */
+function ownsOperation(op: { user?: string }): boolean {
+  return !op.user || op.user === currentUserName();
+}
+
 routes.get("/library/sync/stream", (c) => {
   const op = getActiveOperation();
-  if (!op || op.type !== "sync") {
+  if (!op || op.type !== "sync" || !ownsOperation(op)) {
     return c.text("No active sync operation", 404);
   }
   return sseStream(c, op.reporter);
@@ -226,7 +383,7 @@ routes.post("/library/download", async (c) => {
 
   const reporter = startOperation("download");
 
-  const library = new AudibleLibrary(config.targetDir, reporter);
+  const library = new AudibleLibrary(requestPaths().targetDir, reporter);
 
   // Build the book list from ASINs or default to all not-downloaded
   let books: AudiobookEntry[];
@@ -267,7 +424,7 @@ routes.post("/library/download", async (c) => {
 
 routes.get("/library/download/stream", (c) => {
   const op = getActiveOperation();
-  if (!op || op.type !== "download") {
+  if (!op || op.type !== "download" || !ownsOperation(op)) {
     return c.text("No active download operation", 404);
   }
   return sseStream(c, op.reporter);
@@ -289,10 +446,11 @@ routes.post("/convert/all", async (c) => {
   const reporter = startOperation("convert");
 
   try {
+    const paths = requestPaths();
     const converter = new Converter(
-      config.targetDir,
-      config.outputDir,
-      config.activationBytes,
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
       reporter,
       force,
     );
@@ -348,10 +506,11 @@ routes.post("/convert/:asin", async (c) => {
   const reporter = startOperation("convert");
 
   try {
+    const paths = requestPaths();
     const converter = new Converter(
-      config.targetDir,
-      config.outputDir,
-      config.activationBytes,
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
       reporter,
       force,
     );
@@ -402,7 +561,7 @@ routes.post("/convert/:asin", async (c) => {
 
 routes.get("/convert/stream", (c) => {
   const op = getActiveOperation();
-  if (!op || op.type !== "convert") {
+  if (!op || op.type !== "convert" || !ownsOperation(op)) {
     return c.text("No active convert operation", 404);
   }
   return sseStream(c, op.reporter);

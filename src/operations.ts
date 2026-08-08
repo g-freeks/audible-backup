@@ -1,7 +1,10 @@
 import { EventReporter } from "./progress.ts";
+import { currentUserName } from "./users.ts";
 
 interface ActiveOperation {
   type: string;
+  /** Owning user in multi-tenant mode; undefined in legacy single-user mode. */
+  user?: string;
   reporter: EventReporter;
   finished: boolean;
 }
@@ -18,7 +21,7 @@ export function getActiveOperation(): ActiveOperation | null {
 
 export function startOperation(type: string): EventReporter {
   const reporter = new EventReporter();
-  activeOperation = { type, reporter, finished: false };
+  activeOperation = { type, user: currentUserName(), reporter, finished: false };
   return reporter;
 }
 

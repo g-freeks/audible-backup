@@ -36,14 +36,15 @@ npm run db-reset      # Reset the database
 
 **Core modules** (`src/`):
 - `config.ts` — Loads `.env` manually (no dotenv dependency), exports a `config` object. Environment variables override `.env` values.
-- `db.ts` — SQLite database with a single `audiobooks` table tracking download/conversion state by ASIN. Uses a lazy-initialized singleton connection.
+- `users.ts` — Multi-tenant user registry (`users.json` under `USERS_DIR`). Each user has an isolated data directory (`aax/`, `converted/`, `audible/`, `audiobooks.db`), optional scrypt-hashed password, and optional per-user activation bytes. The current user travels through async call chains via `AsyncLocalStorage` (`runWithUser`/`currentUser`), which is how `db.ts` and the audible-cli wrappers resolve per-user paths without explicit parameters. With zero registered users the app runs in legacy single-user mode driven by env config.
+- `db.ts` — SQLite database with a single `audiobooks` table tracking download/conversion state by ASIN. Keeps one lazy connection per database file; the path resolves to the current user's DB in multi-tenant mode, else `DB_PATH`/config.
 - `library.ts` — `AudibleLibrary` class wraps `audible-cli` commands via `spawn`/`execSync` to list and download books. Auto-imports existing `.aax` files into the DB on construction.
 - `converter.ts` — `Converter` class uses `ffmpeg` to decrypt AAX→MP3 (via activation bytes), then splits by chapters using JSON chapter metadata. Requires `AUDIBLE_ACTIVATION_BYTES`.
 - `progress.ts` — `ProgressReporter` interface with two implementations: `consoleReporter` (for CLI) and `EventReporter` (EventEmitter for web SSE streaming).
 - `operations.ts` — Global singleton tracking the currently active operation (sync or convert), ensuring only one runs at a time.
 
 **Web layer** (`src/web/`):
-- `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). POST endpoints for sync/convert return HTMX fragments that connect to SSE streams. GET `/download/converted/:asin` streams a converted book as a ZIP; GET `/download/aax/:asin` streams the original AAX file. All ASIN params are validated against `^[A-Z0-9]{10}$`.
+- `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). A session middleware resolves the current user from a cookie (in-memory sessions in `sessions.ts`) and wraps handlers in `runWithUser`; `/login`, `/user/switch`, and `/user/add` are public. POST endpoints for sync/convert return HTMX fragments that connect to SSE streams (streams are only visible to the operation's owner). GET `/download/converted/:asin` streams a converted book as a ZIP; GET `/download/aax/:asin` streams the original AAX file. All ASIN params are validated against `^[A-Z0-9]{10}$`.
 - `zip.ts` — Dependency-free store-only streaming ZIP writer (no zip64; 4 GB cap) used for browser downloads.
 - `sse.ts` — Bridges `EventReporter` events to SSE responses for real-time log streaming to the browser.
 - `templates/` — Server-rendered HTML templates (dashboard, library, convert pages).
@@ -60,4 +61,4 @@ All config is in `.env` (see `.env.example`). Key variables: `AUDIBLE_ACTIVATION
 
 ## Docker
 
-The intended deployment is fully sandboxed: `docker-compose.yml` uses **named Docker volumes** (aax, converted, db, audible-auth) — no host bind mounts. The container runs the web server, and users retrieve their books through the web UI's download endpoints rather than from the host filesystem.
+The intended deployment is fully sandboxed: `docker-compose.yml` uses a single **named Docker volume** (`users`, mounted at `/data/users`) — no host bind mounts. Each user's data lives under `/data/users/<name>`. The container runs the web server, and users retrieve their books through the web UI's download endpoints rather than from the host filesystem. Audible login per user: `docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/<name>/audible audible-backup audible quickstart`.
