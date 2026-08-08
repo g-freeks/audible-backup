@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { Converter, type ChapterInfo, type ChapterData } from "../src/converter.ts";
+import { Converter, parseVoucher, type ChapterInfo, type ChapterData } from "../src/converter.ts";
 import { closeDb } from "../src/db.ts";
 
 let dbDir: string;
@@ -119,15 +119,68 @@ describe("Converter.findBookFiles", () => {
     assert.equal(books.length, 1);
     assert.equal(books[0].asin, "B009876543");
   });
+
+  it("returns aaxc book only when its voucher is present", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-aaxc-"));
+    fs.writeFileSync(path.join(dir, "B0AAXC0001_Book.aaxc"), "");
+    fs.writeFileSync(path.join(dir, "B0AAXC0001-chapters.json"), "{}");
+    fs.writeFileSync(path.join(dir, "B0AAXC0001_(500).jpg"), "");
+    const converter = new Converter(dir, outDir, "");
+    assert.deepEqual(converter.findBookFiles(), [], "no voucher -> not convertible");
+
+    fs.writeFileSync(path.join(dir, "B0AAXC0001_Book.voucher"), "{}");
+    const books = converter.findBookFiles();
+    assert.equal(books.length, 1);
+    assert.equal(books[0].asin, "B0AAXC0001");
+    assert.ok(books[0].aaxFile.endsWith(".aaxc"));
+    assert.ok(books[0].voucherFile?.endsWith(".voucher"));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("AAXC vouchers", () => {
+  it("parses the helper's flat voucher format", () => {
+    const voucher = parseVoucher(JSON.stringify({ key: "k".repeat(32), iv: "i".repeat(32) }));
+    assert.equal(voucher.key, "k".repeat(32));
+    assert.equal(voucher.iv, "i".repeat(32));
+  });
+
+  it("parses audible-cli's nested voucher format", () => {
+    const voucher = parseVoucher(
+      JSON.stringify({
+        content_license: { license_response: { key: "abc", iv: "def", rules: [] } },
+      }),
+    );
+    assert.equal(voucher.key, "abc");
+    assert.equal(voucher.iv, "def");
+  });
+
+  it("rejects vouchers without key/iv", () => {
+    assert.throws(() => parseVoucher("{}"), /key\/iv/);
+    assert.throws(() => parseVoucher('{"content_license":{}}'), /key\/iv/);
+  });
+
+  it("builds ffmpeg decrypt args from a voucher for .aaxc", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-va-"));
+    const voucherFile = path.join(dir, "b.voucher");
+    fs.writeFileSync(voucherFile, JSON.stringify({ key: "aa", iv: "bb" }));
+    const converter = new Converter(dir, dir, "");
+    assert.deepEqual(converter.decryptArgs("book.aaxc", voucherFile), [
+      "-audible_key", "aa", "-audible_iv", "bb",
+    ]);
+    assert.throws(() => converter.decryptArgs("book.aaxc"), /No voucher/);
+    assert.deepEqual(new Converter(dir, dir, "deadbeef").decryptArgs("book.aax"), [
+      "-activation_bytes", "deadbeef",
+    ]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("Converter constructor", () => {
-  it("throws when no activation bytes provided", () => {
-    const orig = process.env.AUDIBLE_ACTIVATION_BYTES;
-    delete process.env.AUDIBLE_ACTIVATION_BYTES;
+  it("allows empty activation bytes (only needed for legacy .aax at convert time)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "conv-"));
-    assert.throws(() => new Converter(tmp, tmp, ""), /No activation bytes/);
-    process.env.AUDIBLE_ACTIVATION_BYTES = orig;
+    const converter = new Converter(tmp, tmp, "");
+    assert.throws(() => converter.decryptArgs("book.aax"), /No activation bytes/);
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 

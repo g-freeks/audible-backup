@@ -310,12 +310,15 @@ routes.get("/download/aax/:asin", (c) => {
   }
 
   const stat = fs.statSync(book.aax_path);
+  const contentType = book.aax_path.endsWith(".aaxc")
+    ? "application/octet-stream"
+    : "audio/vnd.audible.aax";
   const body = Readable.toWeb(
     fs.createReadStream(book.aax_path),
   ) as ReadableStream;
   return new Response(body, {
     headers: {
-      ...attachmentHeaders(path.basename(book.aax_path), "audio/vnd.audible.aax"),
+      ...attachmentHeaders(path.basename(book.aax_path), contentType),
       "Content-Length": String(stat.size),
     },
   });
@@ -532,6 +535,7 @@ routes.post("/convert/:asin", async (c) => {
         book.asin,
         book.bookTitle,
         book.bookCover,
+        book.voucherFile,
       )
       .then((success) =>
         reporter.done({

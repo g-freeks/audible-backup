@@ -37,6 +37,29 @@ export interface BookFiles {
   asin: string;
   bookTitle: string;
   bookCover: string;
+  /** Decryption voucher (key/iv), present for .aaxc files. */
+  voucherFile?: string;
+}
+
+export interface AaxcVoucher {
+  key: string;
+  iv: string;
+}
+
+/**
+ * Parse an AAXC voucher file. Accepts both the flat format written by our
+ * Python helper ({key, iv}) and audible-cli's nested .voucher format
+ * ({content_license: {license_response: {key, iv}}}).
+ */
+export function parseVoucher(json: string): AaxcVoucher {
+  const data = JSON.parse(json);
+  const nested = data?.content_license?.license_response;
+  const key = data?.key ?? nested?.key;
+  const iv = data?.iv ?? nested?.iv;
+  if (typeof key !== "string" || typeof iv !== "string" || !key || !iv) {
+    throw new Error("Voucher file has no usable key/iv");
+  }
+  return { key, iv };
 }
 
 export class Converter {
@@ -61,13 +84,9 @@ export class Converter {
     this.outputDir = path.resolve(
       outputDir.replace("~", process.env.HOME || ""),
     );
+    // Activation bytes are only needed for legacy .aax files — .aaxc books
+    // carry their own per-file voucher. Checked per book at convert time.
     this.activationBytes = activationBytes;
-
-    if (!this.activationBytes) {
-      throw new Error(
-        "No activation bytes provided. Set AUDIBLE_ACTIVATION_BYTES in .env or pass as parameter.",
-      );
-    }
 
     this.ensureOutputDirectory();
   }
@@ -117,15 +136,39 @@ export class Converter {
     );
   }
 
-  async convertAaxToMp3(aaxFile: string, outputFile: string, totalDurationMs?: number, asin?: string): Promise<boolean> {
+  /** ffmpeg input decryption args: voucher key/iv for .aaxc, activation bytes for .aax. */
+  decryptArgs(aaxFile: string, voucherFile?: string): string[] {
+    if (aaxFile.endsWith(".aaxc")) {
+      if (!voucherFile) {
+        throw new Error(`No voucher file for ${path.basename(aaxFile)}`);
+      }
+      const voucher = parseVoucher(fs.readFileSync(voucherFile, "utf8"));
+      return ["-audible_key", voucher.key, "-audible_iv", voucher.iv];
+    }
+    if (!this.activationBytes) {
+      throw new Error(
+        "No activation bytes provided. Set AUDIBLE_ACTIVATION_BYTES in .env or in the user's settings.",
+      );
+    }
+    return ["-activation_bytes", this.activationBytes];
+  }
+
+  async convertAaxToMp3(aaxFile: string, outputFile: string, totalDurationMs?: number, asin?: string, voucherFile?: string): Promise<boolean> {
+    let inputArgs: string[];
+    try {
+      inputArgs = this.decryptArgs(aaxFile, voucherFile);
+    } catch (error) {
+      this.reporter.error(String(error instanceof Error ? error.message : error));
+      return false;
+    }
+
     return new Promise((resolve) => {
-      this.reporter.log(`Converting AAX to MP3: ${path.basename(aaxFile)}`);
+      this.reporter.log(`Converting ${path.basename(aaxFile)} to MP3`);
 
       const ffmpegProcess = spawn(
         "ffmpeg",
         [
-          "-activation_bytes",
-          this.activationBytes,
+          ...inputArgs,
           "-i",
           aaxFile,
           "-vn",
@@ -333,6 +376,7 @@ export class Converter {
         chapterFile?: string;
         bookTitle?: string;
         bookCover?: string;
+        voucherFile?: string;
       }
     >();
 
@@ -349,14 +393,16 @@ export class Converter {
 
           const bookEntry = bookMap.get(asin)!;
 
-          if (file.name.endsWith(".aax")) {
+          if (file.name.endsWith(".aax") || file.name.endsWith(".aaxc")) {
             bookEntry.aaxFile = fullPath;
-            const baseName = path.basename(file.name, ".aax");
+            const baseName = file.name.replace(/\.aaxc?$/, "");
             bookEntry.bookTitle = baseName
               .split("-LC_")[0]
               .replace(asin, "")
               .replace(/[_\s]+/g, " ")
               .trim();
+          } else if (file.name.endsWith(".voucher")) {
+            bookEntry.voucherFile = fullPath;
           } else if (file.name.endsWith(".jpg")) {
             bookEntry.bookCover = fullPath;
           } else if (file.name.endsWith("-chapters.json")) {
@@ -368,18 +414,20 @@ export class Converter {
 
     const completeBooks: BookFiles[] = [];
     for (const [asin, files] of bookMap) {
+      const isAaxc = files.aaxFile?.endsWith(".aaxc") ?? false;
       if (
         files.aaxFile &&
         files.chapterFile &&
-        files.bookTitle &&
-        files.bookCover
+        files.bookCover &&
+        (!isAaxc || files.voucherFile)
       ) {
         completeBooks.push({
           aaxFile: files.aaxFile,
           chapterFile: files.chapterFile,
           asin,
-          bookTitle: files.bookTitle,
+          bookTitle: files.bookTitle || "",
           bookCover: files.bookCover,
+          voucherFile: files.voucherFile,
         });
       }
     }
@@ -400,6 +448,7 @@ export class Converter {
     asin: string,
     bookTitle: string,
     bookCover: string,
+    voucherFile?: string,
   ): Promise<boolean> {
     this.reporter.log(`\nProcessing book: ${asin}`);
     this.reporter.bookStart?.(asin);
@@ -423,7 +472,7 @@ export class Converter {
       const tempMp3 = path.join(this.outputDir, `temp_${asin}.mp3`);
       const totalDurationMs = chapterData.content_metadata.chapter_info.runtime_length_ms;
 
-      const conversionSuccess = await this.convertAaxToMp3(aaxFile, tempMp3, totalDurationMs, asin);
+      const conversionSuccess = await this.convertAaxToMp3(aaxFile, tempMp3, totalDurationMs, asin, voucherFile);
       if (!conversionSuccess) {
         this.reporter.bookDone?.(asin, false);
         return false;
@@ -495,6 +544,7 @@ export class Converter {
         book.asin,
         book.bookTitle,
         book.bookCover,
+        book.voucherFile,
       );
       if (success) {
         successCount++;

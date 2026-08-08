@@ -12,6 +12,11 @@ import {
 } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 import { currentUserName, userDirs } from "./users.ts";
+import {
+  runHelper,
+  HelperUnavailableError,
+  type HelperLibraryItem,
+} from "./pyhelper.ts";
 
 /** Env for audible-cli invocations: per-user config dir in multi-tenant mode. */
 function audibleEnv(): NodeJS.ProcessEnv {
@@ -60,7 +65,10 @@ export class AudibleLibrary {
       });
       const found = new Map<string, string>();
       files.forEach((file) => {
-        if (file.isFile() && file.name.endsWith(".aax")) {
+        if (
+          file.isFile() &&
+          (file.name.endsWith(".aax") || file.name.endsWith(".aaxc"))
+        ) {
           const asinMatch = file.name.match(/([A-Z0-9]{10})/);
           if (asinMatch) {
             found.set(asinMatch[1], path.join(file.parentPath, file.name));
@@ -82,9 +90,42 @@ export class AudibleLibrary {
     }
   }
 
-  getLibraryList(): AudiobookEntry[] {
+  async getLibraryList(): Promise<AudiobookEntry[]> {
+    const viaHelper = await this.libraryViaHelper();
+    if (viaHelper !== null) return viaHelper;
+    return this.libraryViaCli();
+  }
+
+  /** Structured listing via the Python helper; null if the helper is unavailable. */
+  private async libraryViaHelper(): Promise<AudiobookEntry[] | null> {
     try {
       this.reporter.log("Fetching library list from Audible...");
+      const done = await runHelper(["library"], (ev) => {
+        if (ev.type === "error") this.reporter.error(String(ev.message));
+      });
+      if (!done.ok) {
+        throw new Error(done.message || `Helper failed: ${done.reason}`);
+      }
+      const items = (done.items as HelperLibraryItem[]) || [];
+      return items
+        .filter((item) => item.asin && item.downloadable !== false)
+        .map((item) => ({
+          asin: item.asin,
+          author: item.authors || "",
+          title: item.title || item.asin,
+          fullLine: "",
+        }));
+    } catch (error) {
+      if (error instanceof HelperUnavailableError) {
+        this.reporter.log("Python helper unavailable, falling back to audible-cli");
+        return null;
+      }
+      throw new Error(`Failed to get library list: ${error}`);
+    }
+  }
+
+  private libraryViaCli(): AudiobookEntry[] {
+    try {
       const output = execSync("audible library list", {
         encoding: "utf8",
         maxBuffer: config.libraryMaxBuffer,
@@ -113,7 +154,7 @@ export class AudibleLibrary {
     }
   }
 
-  /** Find the actual .aax file for an ASIN — audible-cli filenames include more than the bare ASIN. */
+  /** Find the actual .aax/.aaxc file for an ASIN — filenames include more than the bare ASIN. */
   private findAaxFile(asin: string): string | undefined {
     try {
       const files = fs.readdirSync(this.targetDir, {
@@ -123,7 +164,7 @@ export class AudibleLibrary {
       for (const file of files) {
         if (
           file.isFile() &&
-          file.name.endsWith(".aax") &&
+          (file.name.endsWith(".aax") || file.name.endsWith(".aaxc")) &&
           file.name.includes(asin)
         ) {
           return path.join(file.parentPath, file.name);
@@ -171,8 +212,66 @@ export class AudibleLibrary {
     title: string,
     force: boolean = false,
   ): Promise<boolean> {
+    this.reporter.log(`Downloading: ${author}: ${title} (${asin})`);
+    const viaHelper = await this.downloadViaHelper(asin, author, title);
+    if (viaHelper !== null) return viaHelper;
+    return this.downloadViaCli(asin, author, title, force);
+  }
+
+  /**
+   * AAXC download via the Python helper (license request + voucher + chapters
+   * + cover). Returns null if the helper is unavailable so the audible-cli
+   * AAX path can take over.
+   */
+  private async downloadViaHelper(
+    asin: string,
+    author: string,
+    title: string,
+  ): Promise<boolean | null> {
+    try {
+      const done = await runHelper(["download", asin, this.targetDir, title], (ev) => {
+        if (ev.type === "progress") {
+          this.reporter.bookProgress?.(asin, Number(ev.pct));
+        } else if (ev.type === "log") {
+          this.reporter.log(String(ev.message));
+        } else if (ev.type === "error") {
+          this.reporter.error(String(ev.message));
+        }
+      });
+      if (!done.ok) {
+        if (done.reason === "not_downloadable") {
+          this.reporter.warn(`Marked as not downloadable: ${title}`);
+          markNotDownloadable(asin);
+        } else {
+          this.reporter.error(
+            `Failed to download ${title}: ${done.message || done.reason}`,
+          );
+        }
+        return false;
+      }
+      const files = (done.files || {}) as { aaxc?: string };
+      const aaxPath =
+        files.aaxc || this.findAaxFile(asin) || path.join(this.targetDir, `${asin}.aaxc`);
+      markDownloaded(asin, author, title, aaxPath);
+      this.reporter.log(`Successfully downloaded: ${title}`);
+      return true;
+    } catch (error) {
+      if (error instanceof HelperUnavailableError) {
+        this.reporter.log("Python helper unavailable, falling back to audible-cli");
+        return null;
+      }
+      this.reporter.error(`Error downloading ${title}: ${error}`);
+      return false;
+    }
+  }
+
+  private async downloadViaCli(
+    asin: string,
+    author: string,
+    title: string,
+    force: boolean = false,
+  ): Promise<boolean> {
     const result = await new Promise((resolve) => {
-      this.reporter.log(`Downloading: ${author}: ${title} (${asin})`);
 
       const downloadArgs = [
         "download",
@@ -281,7 +380,7 @@ export class AudibleLibrary {
   }
 
   async sync(force: boolean = false): Promise<AudiobookEntry[]> {
-    const libraryEntries = this.getLibraryList();
+    const libraryEntries = await this.getLibraryList();
     this.reporter.log(`Found ${libraryEntries.length} books in library`);
 
     const ignoredAsins = getIgnoredAsins();
@@ -352,7 +451,7 @@ export class AudibleLibrary {
   }
 
   async listStatus(): Promise<void> {
-    const libraryEntries = this.getLibraryList();
+    const libraryEntries = await this.getLibraryList();
     const downloadedAsins = getDownloadedAsins();
     const ignoredAsins = getIgnoredAsins();
     const newBooks = libraryEntries.filter(
