@@ -1,4 +1,36 @@
-export function layout(title: string, content: string): string {
+export interface UserNav {
+  current: string;
+  others: { name: string; hasPassword: boolean }[];
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function topbar(userNav: UserNav): string {
+  const items = [
+    ...userNav.others.map((u) => {
+      const name = escapeHtml(u.name);
+      if (u.hasPassword) {
+        return `<a class="dropdown-item" href="/login?user=${encodeURIComponent(u.name)}">Switch to ${name}</a>`;
+      }
+      return `<form method="post" action="/user/switch"><input type="hidden" name="name" value="${name}"><button class="dropdown-item" type="submit">Switch to ${name}</button></form>`;
+    }),
+    `<a class="dropdown-item" href="/user/settings">Settings</a>`,
+    `<a class="dropdown-item" href="/login">Add user&hellip;</a>`,
+    `<form method="post" action="/user/logout"><button class="dropdown-item" type="submit">Sign out</button></form>`,
+  ].join("");
+
+  return `<header class="topbar">
+    <span class="topbar-title">Audible Backup</span>
+    <div class="action-dropdown">
+      <button class="btn btn-sm btn-ghost" type="button" onclick="this.closest('.action-dropdown').classList.toggle('open')">${escapeHtml(userNav.current)} &#9662;</button>
+      <div class="dropdown-menu">${items}</div>
+    </div>
+  </header>`;
+}
+
+export function layout(title: string, content: string, userNav?: UserNav): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -95,6 +127,7 @@ export function layout(title: string, content: string): string {
     .btn-primary:hover { background: var(--accent-hover); }
     .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    a.btn, a.dropdown-item { text-decoration: none; box-sizing: border-box; }
     .log-panel {
       background: #0a0c10;
       padding: 1rem;
@@ -291,9 +324,21 @@ export function layout(title: string, content: string): string {
     .dropdown-item:hover { background: var(--surface2); }
     .dropdown-item.danger { color: var(--danger); }
     .dropdown-item.danger:hover { background: rgba(248,113,113,0.1); }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar-title { font-weight: 600; font-size: 0.95rem; }
+    .topbar .dropdown-menu form { display: block; }
+    body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
   </style>
 </head>
-<body>
+<body${userNav ? ' class="has-topbar"' : ""}>
+  ${userNav ? topbar(userNav) : ""}
   <main>${content}</main>
   <div id="log-float">
     <div id="log-float-header">
@@ -319,6 +364,13 @@ export function layout(title: string, content: string): string {
 
     minimizeBtn.addEventListener('click', () => {
       logFloat.classList.toggle('minimized');
+    });
+
+    // Close any open dropdown when clicking outside of it
+    document.addEventListener('click', (e) => {
+      document.querySelectorAll('.action-dropdown.open').forEach(d => {
+        if (!d.contains(e.target)) d.classList.remove('open');
+      });
     });
 
     // Auto-scroll log panels

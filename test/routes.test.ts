@@ -27,6 +27,7 @@ beforeEach(() => {
   process.env.AUDIBLE_TARGET_DIR = path.join(tmpDir, "aax");
   process.env.AUDIBLE_OUTPUT_DIR = path.join(tmpDir, "output");
   process.env.AUDIBLE_ACTIVATION_BYTES = "deadbeef";
+  process.env.USERS_DIR = path.join(tmpDir, "users");
   fs.mkdirSync(process.env.AUDIBLE_TARGET_DIR, { recursive: true });
   fs.mkdirSync(process.env.AUDIBLE_OUTPUT_DIR, { recursive: true });
   closeDb();
@@ -464,5 +465,169 @@ describe("ASIN validation", () => {
     });
     assert.equal(res.status, 302);
     assert.equal(isIgnored("B000000009"), true);
+  });
+});
+
+// --- Browser downloads ---
+
+describe("download endpoints", () => {
+  it("streams converted book as a valid ZIP", async () => {
+    const bookDir = path.join(tmpDir, "output", "My Book");
+    fs.mkdirSync(bookDir, { recursive: true });
+    fs.writeFileSync(path.join(bookDir, "01 - Intro.mp3"), "mp3 bytes");
+    markDownloaded("B00DOWNLD1", "Author", "My Book", "/none.aax");
+    markConverted("B00DOWNLD1", bookDir, 1);
+
+    const res = await app.request("/download/converted/B00DOWNLD1");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "application/zip");
+    assert.match(res.headers.get("content-disposition") || "", /My%20Book\.zip/);
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.readUInt32LE(0), 0x04034b50, "ZIP magic");
+  });
+
+  it("404s for converted download when book is not converted", async () => {
+    upsertBook("B00DOWNLD2", "Author", "Unconverted");
+    const res = await app.request("/download/converted/B00DOWNLD2");
+    assert.equal(res.status, 404);
+  });
+
+  it("streams the raw AAX file", async () => {
+    const aaxPath = path.join(tmpDir, "aax", "B00DOWNLD3.aax");
+    fs.writeFileSync(aaxPath, "aax bytes");
+    markDownloaded("B00DOWNLD3", "Author", "Raw Book", aaxPath);
+
+    const res = await app.request("/download/aax/B00DOWNLD3");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "aax bytes");
+    assert.equal(res.headers.get("content-length"), "9");
+  });
+
+  it("404s for AAX download when the file is missing", async () => {
+    markDownloaded("B00DOWNLD4", "Author", "Ghost", path.join(tmpDir, "gone.aax"));
+    const res = await app.request("/download/aax/B00DOWNLD4");
+    assert.equal(res.status, 404);
+  });
+
+  it("rejects invalid ASINs on download routes", async () => {
+    for (const url of ["/download/converted/nope", "/download/aax/nope"]) {
+      const res = await app.request(url);
+      assert.equal(res.status, 400, `expected 400 for ${url}`);
+    }
+  });
+});
+
+// --- Multi-tenant sessions ---
+
+describe("multi-tenant mode", () => {
+  function cookieFrom(res: Response): string {
+    const setCookie = res.headers.get("set-cookie") || "";
+    return setCookie.split(";")[0];
+  }
+
+  it("runs in legacy mode when no users exist", async () => {
+    const res = await app.request("/api/status");
+    assert.equal(res.status, 200);
+  });
+
+  it("requires login once a user exists, and add-user signs in", async () => {
+    const addRes = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "alice" }),
+      redirect: "manual",
+    });
+    assert.equal(addRes.status, 302);
+    const cookie = cookieFrom(addRes);
+    assert.match(cookie, /^session=/);
+
+    const noAuth = await app.request("/", { redirect: "manual" });
+    assert.equal(noAuth.status, 302);
+    assert.equal(noAuth.headers.get("location"), "/login");
+
+    const withAuth = await app.request("/", { headers: { cookie } });
+    assert.equal(withAuth.status, 200);
+    const html = await withAuth.text();
+    assert.match(html, /alice/);
+  });
+
+  it("rejects wrong passwords and accepts correct ones", async () => {
+    await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "bob", password: "secret" }),
+      redirect: "manual",
+    });
+
+    const wrong = await app.request("/user/switch", {
+      method: "POST",
+      body: new URLSearchParams({ name: "bob", password: "nope" }),
+      redirect: "manual",
+    });
+    assert.equal(wrong.status, 401);
+
+    const right = await app.request("/user/switch", {
+      method: "POST",
+      body: new URLSearchParams({ name: "bob", password: "secret" }),
+      redirect: "manual",
+    });
+    assert.equal(right.status, 302);
+    assert.match(cookieFrom(right), /^session=/);
+  });
+
+  it("isolates library data between users", async () => {
+    const aliceRes = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "alice" }),
+      redirect: "manual",
+    });
+    const bobRes = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "bob" }),
+      redirect: "manual",
+    });
+    const aliceCookie = cookieFrom(aliceRes);
+    const bobCookie = cookieFrom(bobRes);
+
+    const { runWithUser } = await import("../src/users.ts");
+    runWithUser("alice", () => {
+      markDownloaded("B00ALICE01", "Author", "Alice Book", "/a.aax");
+    });
+
+    const aliceBooks = await (await app.request("/api/books", { headers: { cookie: aliceCookie } })).json();
+    const bobBooks = await (await app.request("/api/books", { headers: { cookie: bobCookie } })).json();
+    assert.equal(aliceBooks.length, 1);
+    assert.equal(bobBooks.length, 0);
+  });
+
+  it("updates settings for the current user", async () => {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "carol" }),
+      redirect: "manual",
+    });
+    const cookie = cookieFrom(res);
+
+    const save = await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ activation_bytes: "cafebabe" }),
+    });
+    assert.equal(save.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("carol")?.activationBytes, "cafebabe");
+  });
+
+  it("logout destroys the session", async () => {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "dave" }),
+      redirect: "manual",
+    });
+    const cookie = cookieFrom(res);
+
+    await app.request("/user/logout", { method: "POST", headers: { cookie }, redirect: "manual" });
+    const after = await app.request("/", { headers: { cookie }, redirect: "manual" });
+    assert.equal(after.status, 302);
+    assert.equal(after.headers.get("location"), "/login");
   });
 });

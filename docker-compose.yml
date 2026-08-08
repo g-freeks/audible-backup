@@ -1,18 +1,30 @@
+# Sandboxed setup: all data lives in a named Docker volume — the container has
+# no access to the host filesystem. Each user's library, database, and Audible
+# credentials live under /data/users/<name>; books are retrieved through the
+# web UI's Download buttons.
 services:
   audible-backup:
     build: .
     ports:
       - "3000:3000"
     volumes:
-      - ${AUDIBLE_TARGET_DIR:-./data/aax}:/data/aax
-      - ${AUDIBLE_OUTPUT_DIR:-./data/converted}:/data/converted
-      - ${DB_DIR:-./data/db}:/data/db
-      - ${AUDIBLE_AUTH_DIR:-./data/audible-auth}:/root/.audible
+      - users:/data/users
     environment:
-      - AUDIBLE_ACTIVATION_BYTES=${AUDIBLE_ACTIVATION_BYTES}
-      - AUDIBLE_TARGET_DIR=/data/aax
-      - AUDIBLE_OUTPUT_DIR=/data/converted
-      - DB_PATH=/data/db/audiobooks.db
+      - USERS_DIR=/data/users
+      # Legacy single-user mode (before the first user is created) also
+      # stays inside the volume.
+      - AUDIBLE_TARGET_DIR=/data/users/_legacy/aax
+      - AUDIBLE_OUTPUT_DIR=/data/users/_legacy/converted
+      - DB_PATH=/data/users/_legacy/audiobooks.db
+      # Fallback activation bytes for users that don't set their own.
+      - AUDIBLE_ACTIVATION_BYTES=${AUDIBLE_ACTIVATION_BYTES:-}
       - MP3_QUALITY=${MP3_QUALITY:-4}
       - WEB_PORT=3000
+      # Optional basic auth gate in front of the whole app (per-user
+      # passwords are managed in the web UI).
+      - WEB_USER=${WEB_USER:-}
+      - WEB_PASSWORD=${WEB_PASSWORD:-}
     restart: unless-stopped
+
+volumes:
+  users:

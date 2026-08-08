@@ -2,10 +2,17 @@ import { DatabaseSync } from "node:sqlite";
 import * as path from "path";
 import * as fs from "fs";
 import { config } from "./config.ts";
+import { currentUserName, userDirs } from "./users.ts";
 
-let db: DatabaseSync | null = null;
+// One connection per database file. In multi-tenant mode each user has their
+// own database; the current user is resolved from the async context.
+const connections = new Map<string, DatabaseSync>();
 
 function resolveDbPath(): string {
+  const userName = currentUserName();
+  if (userName) {
+    return userDirs(userName).dbPath;
+  }
   if (process.env.DB_PATH) {
     return path.resolve(
       process.env.DB_PATH.replace("~", process.env.HOME || ""),
@@ -14,14 +21,7 @@ function resolveDbPath(): string {
   return config.dbPath;
 }
 
-export function getDb(): DatabaseSync {
-  if (db) return db;
-  const dbPath = resolveDbPath();
-  const dbDir = path.dirname(dbPath);
-  if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true });
-  }
-  db = new DatabaseSync(dbPath);
+function initSchema(db: DatabaseSync): void {
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA foreign_keys=ON");
   db.exec(`
@@ -39,7 +39,7 @@ export function getDb(): DatabaseSync {
         )
     `);
 
-  // Migration: add ignored_at column if it doesn't exist
+  // Migration: add columns if they don't exist
   const cols = db.prepare("PRAGMA table_info(audiobooks)").all() as { name: string }[];
   if (!cols.some((c) => c.name === "ignored_at")) {
     db.exec("ALTER TABLE audiobooks ADD COLUMN ignored_at TEXT");
@@ -47,20 +47,34 @@ export function getDb(): DatabaseSync {
   if (!cols.some((c) => c.name === "not_downloadable_at")) {
     db.exec("ALTER TABLE audiobooks ADD COLUMN not_downloadable_at TEXT");
   }
+}
 
+export function getDb(): DatabaseSync {
+  const dbPath = resolveDbPath();
+  const existing = connections.get(dbPath);
+  if (existing) return existing;
+
+  const dbDir = path.dirname(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  const db = new DatabaseSync(dbPath);
+  initSchema(db);
+  connections.set(dbPath, db);
   return db;
 }
 
 export function resetDatabase(): void {
-  const db = getDb()
+  const db = getDb();
   db.exec("DROP TABLE IF EXISTS audiobooks;");
+  initSchema(db);
 }
 
 export function closeDb(): void {
-  if (db) {
+  for (const db of connections.values()) {
     db.close();
-    db = null;
   }
+  connections.clear();
 }
 
 export function markDownloaded(

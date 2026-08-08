@@ -11,6 +11,16 @@ import {
   upsertBook,
 } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
+import { currentUserName, userDirs } from "./users.ts";
+
+/** Env for audible-cli invocations: per-user config dir in multi-tenant mode. */
+function audibleEnv(): NodeJS.ProcessEnv {
+  const userName = currentUserName();
+  if (userName) {
+    return { ...process.env, AUDIBLE_CONFIG_DIR: userDirs(userName).authDir };
+  }
+  return process.env;
+}
 
 export interface AudiobookEntry {
   asin: string;
@@ -78,6 +88,7 @@ export class AudibleLibrary {
       const output = execSync("audible library list", {
         encoding: "utf8",
         maxBuffer: config.libraryMaxBuffer,
+        env: audibleEnv(),
       });
 
       const entries: AudiobookEntry[] = [];
@@ -184,6 +195,7 @@ export class AudibleLibrary {
         downloadArgs,
         {
           stdio: ["pipe", "pipe", "pipe"],
+          env: audibleEnv(),
         },
       );
 
@@ -246,6 +258,7 @@ export class AudibleLibrary {
         ],
         {
           stdio: ["pipe", "pipe", "pipe"],
+          env: audibleEnv(),
         },
       );
 
