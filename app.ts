@@ -145,6 +145,7 @@ Examples:
               book.asin,
               book.bookTitle,
               book.bookCover,
+              book.voucherFile,
             );
           } else {
             console.error(

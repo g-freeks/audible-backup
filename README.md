@@ -83,10 +83,19 @@ circumvent DRM on content you have not purchased, and be aware that removing
 DRM may be restricted by law in your jurisdiction and by Audible's terms of
 service.
 
+## AAXC support
+
+Downloads use a small Python helper (`helper/audible_helper.py`, built on the
+[`audible`](https://github.com/mkb79/Audible) package that ships with
+audible-cli) which fetches the license voucher and downloads books in AAXC
+format — including titles that are AAXC-only on newer Audible accounts.
+Conversion decrypts AAXC with the per-file voucher key/iv, so
+**activation bytes are only needed for legacy `.aax` files**. If the helper's
+Python dependency is unavailable, the app falls back to downloading AAX via
+audible-cli as before. Signing in via `audible quickstart` covers both paths.
+
 ## Limitations
 
-- Only AAX downloads are supported; AAXC-only titles (common on newer Audible
-  accounts) are not handled yet.
 - Output is chapter-split MP3 only (no single-file M4B option).
 - ZIP downloads are store-only (MP3s don't compress) and capped at 4 GB per
   archive.
