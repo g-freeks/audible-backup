@@ -1,10 +1,8 @@
+import { escapeHtml } from "./html.ts";
+
 export interface UserNav {
   current: string;
   others: { name: string; hasPassword: boolean }[];
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function topbar(userNav: UserNav): string {
@@ -24,7 +22,7 @@ function topbar(userNav: UserNav): string {
   return `<header class="topbar">
     <span class="topbar-title">Audible Backup</span>
     <div class="action-dropdown">
-      <button class="btn btn-sm btn-ghost" type="button" onclick="this.closest('.action-dropdown').classList.toggle('open')">${escapeHtml(userNav.current)} &#9662;</button>
+      <button class="btn btn-sm btn-ghost" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false">${escapeHtml(userNav.current)} &#9662;</button>
       <div class="dropdown-menu">${items}</div>
     </div>
   </header>`;
@@ -40,6 +38,7 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M3 5c0 0 4-2 13 2v22c-9-4-13-2-13-2V5z' fill='%236c8cff'/><path d='M29 5c0 0-4-2-13 2v22c9-4 13-2 13-2V5z' fill='%238ba4ff'/></svg>">
   <script src="/static/htmx.min.js"></script>
   <script src="/static/sse.js"></script>
+  <script src="/static/app.js" defer></script>
   <style>
     :root {
       --bg: #0f1117;
@@ -335,59 +334,40 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     .topbar-title { font-weight: 600; font-size: 0.95rem; }
     .topbar .dropdown-menu form { display: block; }
     body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
+    #toast-region {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      font-size: 0.85rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .toast.error { border-left-color: var(--danger); }
   </style>
 </head>
 <body${userNav ? ' class="has-topbar"' : ""}>
   ${userNav ? topbar(userNav) : ""}
   <main>${content}</main>
+  <div id="toast-region" role="status" aria-live="polite"></div>
   <div id="log-float">
     <div id="log-float-header">
       <span id="log-float-title">Operation Log</span>
       <div>
-        <button id="log-float-reload" style="display:none" onclick="location.reload()" title="Reload page to refresh data">Reload</button>
-        <button id="log-float-minimize" title="Minimize">&#x2015;</button>
+        <button id="log-float-minimize" title="Minimize" aria-label="Minimize operation log">&#x2015;</button>
       </div>
     </div>
     <div id="progress-panel"></div>
   </div>
-  <script>
-    const logFloat = document.getElementById('log-float');
-    const progressPanel = document.getElementById('progress-panel');
-    const minimizeBtn = document.getElementById('log-float-minimize');
-    // Show the floating panel when content first arrives
-    const observer = new MutationObserver(() => {
-      if (progressPanel.children.length > 0 && !logFloat.classList.contains('visible')) {
-        logFloat.classList.add('visible');
-      }
-    });
-    observer.observe(progressPanel, { childList: true });
-
-    minimizeBtn.addEventListener('click', () => {
-      logFloat.classList.toggle('minimized');
-    });
-
-    // Close any open dropdown when clicking outside of it
-    document.addEventListener('click', (e) => {
-      document.querySelectorAll('.action-dropdown.open').forEach(d => {
-        if (!d.contains(e.target)) d.classList.remove('open');
-      });
-    });
-
-    // Auto-scroll log panels
-    document.addEventListener('htmx:sseMessage', function(e) {
-      const panel = e.target.closest('.log-panel');
-      if (panel) {
-        requestAnimationFrame(() => {
-          panel.scrollTop = panel.scrollHeight;
-        });
-      }
-    });
-    // Show reload button after operation completes
-    document.body.addEventListener('htmx:sseClose', function() {
-      const reloadBtn = document.getElementById('log-float-reload');
-      if (reloadBtn) reloadBtn.style.display = 'inline-block';
-    });
-  </script>
 </body>
 </html>`;
 }

@@ -1,10 +1,8 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { EventReporter } from "../progress.ts";
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+import { escapeHtml } from "./templates/html.ts";
+import { badge, bookStatusSwap, progressBar } from "./templates/components.ts";
 
 export function sseStream(c: Context, reporter: EventReporter): Response {
   return streamSSE(c, async (stream) => {
@@ -30,7 +28,7 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
       if (closed) return;
       try {
         await stream.writeSSE({
-          data: `<div id="op-progress" hx-swap-oob="true"><div class="progress-bar progress-bar-lg"><div class="progress-bar-fill" style="width:${data.percent}%;animation:none"></div></div><small class="progress-label">${escapeHtml(data.label)}: ${data.percent}%</small></div>`,
+          data: `<div id="op-progress" hx-swap-oob="true"><div class="progress-bar progress-bar-lg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${data.percent}"><div class="progress-bar-fill" style="width:${data.percent}%;animation:none"></div></div><small class="progress-label">${escapeHtml(data.label)}: ${data.percent}%</small></div>`,
           event: "log",
         });
       } catch {
@@ -42,7 +40,7 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
       if (closed) return;
       try {
         await stream.writeSSE({
-          data: `<span id="status-${escapeHtml(data.asin)}" hx-swap-oob="true"><span class="badge badge-warn">Processing&hellip;</span><div class="progress-bar"><div class="progress-bar-fill"></div></div></span>`,
+          data: bookStatusSwap(data.asin, badge("warn", "Processing…") + progressBar()),
           event: "log",
         });
       } catch {
@@ -54,7 +52,10 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
       if (closed) return;
       try {
         await stream.writeSSE({
-          data: `<span id="status-${escapeHtml(data.asin)}" hx-swap-oob="true"><span class="badge badge-warn">${data.percent}%</span><div class="progress-bar"><div class="progress-bar-fill" style="width:${data.percent}%;animation:none"></div></div></span>`,
+          data: bookStatusSwap(
+            data.asin,
+            badge("warn", `${data.percent}%`) + progressBar(data.percent),
+          ),
           event: "log",
         });
       } catch {
@@ -65,11 +66,11 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
     const onBookDone = async (data: { asin: string; success: boolean }) => {
       if (closed) return;
       try {
-        const badge = data.success
-          ? '<span class="badge badge-success">Done</span>'
-          : '<span class="badge badge-danger">Failed</span>';
         await stream.writeSSE({
-          data: `<span id="status-${escapeHtml(data.asin)}" hx-swap-oob="true">${badge}</span>`,
+          data: bookStatusSwap(
+            data.asin,
+            data.success ? badge("success", "Done") : badge("danger", "Failed"),
+          ),
           event: "log",
         });
       } catch {
