@@ -3,7 +3,7 @@ import { config } from "../config.ts";
 
 import * as fs from "fs";
 import * as path from "path";
-import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, isConverted, ignoreBook, unignoreBook, deleteBook } from "../db.ts";
+import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, isConverted, ignoreBook, unignoreBook, deleteBook, resetDatabase } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
 import { Converter } from "../converter.ts";
 import {
@@ -276,6 +276,22 @@ routes.post("/user/audible/complete", async (c) => {
     const msg = err instanceof Error ? err.message : String(err);
     return renderSettings(c, { error: `Sign-in failed: ${msg}` }, 400);
   }
+});
+
+routes.post("/user/reset-db", (c) => {
+  const user = currentUser();
+  if (!user) return c.redirect("/login");
+  if (isOperationRunning()) {
+    return renderSettings(
+      c,
+      { error: "An operation is running — wait for it to finish first." },
+      400,
+    );
+  }
+  resetDatabase();
+  return renderSettings(c, {
+    message: "Library database reset. Files on disk were kept.",
+  });
 });
 
 routes.post("/user/audible/cancel", (c) => {

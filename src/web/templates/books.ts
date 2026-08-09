@@ -115,8 +115,6 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
          every action button's response and swap in nothing. -->
     <div hx-get="/" hx-select=".library-layout" hx-target=".library-layout" hx-swap="outerHTML" hx-trigger="refresh-books from:body"></div>
     <div class="library-layout">
-      <h1>Books</h1>
-
       <div class="actions">
         <button class="btn btn-primary" hx-post="/library/sync" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Fetch latest library listing from Audible">
           Sync Library
@@ -156,7 +154,7 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
             <tr>
               <th><input type="checkbox" id="select-all" aria-label="Select all visible books"></th>
               <th class="sortable" data-sort-col="1" data-sort-type="string">Title</th>
-              <th class="sortable" data-sort-col="2" data-sort-type="string">Author</th>
+              <th class="sortable col-author" data-sort-col="2" data-sort-type="string">Author</th>
               <th class="sortable" data-sort-col="3" data-sort-type="string">ASIN</th>
               <th class="sortable" data-sort-col="4" data-sort-type="status">Status</th>
               <th class="sortable" data-sort-col="5" data-sort-type="string">Downloaded</th>
@@ -176,7 +174,7 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
               return `<tr data-status="${status}" data-search="${escapeHtml(searchData)}">
                 <td><input type="checkbox" name="asin" value="${book.asin}" aria-label="Select ${title}"></td>
                 <td data-sort-val="${escapeHtml(title.toLowerCase())}">${title}</td>
-                <td data-sort-val="${escapeHtml(author.toLowerCase())}">${author}</td>
+                <td class="col-author" data-sort-val="${escapeHtml(author.toLowerCase())}" title="${author}">${author}</td>
                 <td data-sort-val="${book.asin}"><code>${book.asin}</code></td>
                 <td data-sort-val="${status}"><span id="status-${book.asin}">${statusBadge(status)}</span></td>
                 <td data-sort-val="${dateSortVal}">${date}</td>

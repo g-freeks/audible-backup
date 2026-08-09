@@ -174,6 +174,12 @@
     }
   });
 
+  // Confirmation for destructive form submissions (data-confirm on the form).
+  document.addEventListener("submit", function (e) {
+    var message = e.target instanceof HTMLElement && e.target.dataset.confirm;
+    if (message && !window.confirm(message)) e.preventDefault();
+  });
+
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") closeDropdowns();
   });
