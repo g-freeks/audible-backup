@@ -257,7 +257,8 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       padding: 0.45rem 0.75rem;
       font-size: 0.85rem;
       outline: none;
-      min-width: 200px;
+      min-width: 19rem;
+      flex: 0 1 22rem;
     }
     .filter-bar input:focus { border-color: var(--accent); }
     .filter-pills { display: flex; gap: 0.35rem; flex-wrap: wrap; }

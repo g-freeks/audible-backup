@@ -5,6 +5,7 @@ node_modules
 .gitignore
 .claude
 .idea
+.mcp.json
 data/
 test/
 *.db
