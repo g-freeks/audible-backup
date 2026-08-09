@@ -11,8 +11,14 @@ Audible Backup Tool syncs an Audible library, downloads AAX audiobook files via 
 All commands require Node 24+ (native type stripping and `node:sqlite`, no flags needed).
 
 ```bash
-# Run tests (Node built-in test runner)
+# Run unit/route tests (Node built-in test runner)
 npm test
+
+# Run browser tests (Chromium via playwright-core; starts a real server)
+npm run test:ui
+
+# Everything
+npm run test:all
 
 # Run a single test file
 node --test test/converter.test.ts
@@ -50,6 +56,8 @@ npm run db-reset      # Reset the database
 - `sse.ts` — Bridges `EventReporter` events to SSE responses for real-time log streaming to the browser.
 - `templates/` — Server-rendered HTML templates. `html.ts` provides an auto-escaping `html` tagged template (`raw()` for trusted fragments); `components.ts` holds shared badge/progress fragments used by pages, SSE events, and OOB swaps. Templates contain no inline JS — all client behavior lives in `static/app.js` (delegated listeners, so it survives HTMX swaps), which enables the strict CSP set in `routes.ts` via `secureHeaders`.
 - `server.ts` (repo root) — Enables HTTP basic auth when `WEB_USER` and `WEB_PASSWORD` are both set.
+
+**Testing**: `test/*.test.ts` are fast unit/route tests (no browser). `test/ui/*.test.ts` are Chromium tests that spawn a real server via `test/ui/fixture.ts` — they exist for behavior HTML-level tests cannot see: htmx attribute inheritance, CSP enforcement, and delegated event handlers. `.dockerignore` excludes both. In the dev container Chromium is found at `/opt/pw-browsers/chromium`; override with `CHROMIUM_PATH`.
 
 **Key patterns**:
 - `AudibleLibrary` and `Converter` both accept a `ProgressReporter` via constructor injection — `consoleReporter` for CLI use, `EventReporter` for web use.
