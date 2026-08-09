@@ -12,16 +12,28 @@ function getStatus(book: AudiobookRow, convertibleAsins: Set<string>): string {
   return "converted";
 }
 
+/**
+ * One primary action per row: get the MP3s. It fetches from Audible and
+ * converts as needed, then the browser starts the ZIP download by itself.
+ * Books already converted skip straight to the download link.
+ */
+function getMp3sButton(asin: string, converted: boolean): string {
+  if (converted) {
+    return `<a class="btn btn-sm btn-primary split-main" href="/download/converted/${asin}" title="Download the chapter MP3s as a ZIP">Get MP3s</a>`;
+  }
+  return `<button class="btn btn-sm btn-primary split-main" hx-post="/prepare/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Fetch from Audible if needed, convert, then download the MP3s">Get MP3s</button>`;
+}
+
 function downloadAaxItem(asin: string): string {
-  return `<a class="dropdown-item" href="/download/aax/${asin}" title="Download the original encrypted AAX file">Download AAX</a>`;
+  return `<a class="dropdown-item" href="/download/aax/${asin}" title="Download the original, still encrypted Audible file">Save original AAX</a>`;
 }
 
 function reconvertItem(asin: string): string {
-  return `<button class="dropdown-item" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"force":"true"}'>Re-convert</button>`;
+  return `<button class="dropdown-item" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"force":"true"}'>Convert again</button>`;
 }
 
 function redownloadItem(asin: string): string {
-  return `<button class="dropdown-item" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"asin":"${asin}","force":"true"}'>Re-download</button>`;
+  return `<button class="dropdown-item" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-vals='{"asin":"${asin}","force":"true"}'>Fetch again from Audible</button>`;
 }
 
 function ignoreItem(asin: string): string {
@@ -39,28 +51,29 @@ function actionButtons(book: AudiobookRow, status: string): string {
 
   switch (status) {
     case "not-downloadable":
-      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}"}' title="Retry downloading this audiobook">Retry</button>`;
+      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/prepare/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Try again: fetch from Audible, convert, then download">Retry</button>`;
       items.push(ignoreItem(asin));
       break;
     case "not-downloaded":
-      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}"}' title="Download this audiobook from Audible">Download</button>`;
+      primary = getMp3sButton(asin, false);
       items.push(ignoreItem(asin));
       break;
     case "downloaded":
-      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-vals='{"asin":"${asin}","force":"true"}' title="Re-download with overwrite">Re-download</button>`;
+      primary = getMp3sButton(asin, false);
       items.push(downloadAaxItem(asin));
+      items.push(redownloadItem(asin));
       items.push(ignoreItem(asin));
       items.push(deleteItem(asin));
       break;
     case "convertible":
-      primary = `<button class="btn btn-sm btn-primary split-main" hx-post="/convert/${asin}" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" title="Convert AAX to chapter-split MP3s">Convert</button>`;
+      primary = getMp3sButton(asin, false);
       items.push(downloadAaxItem(asin));
       items.push(redownloadItem(asin));
       items.push(ignoreItem(asin));
       items.push(deleteItem(asin));
       break;
     case "converted":
-      primary = `<a class="btn btn-sm btn-primary split-main" href="/download/converted/${asin}" title="Download converted MP3s as a ZIP">Download</a>`;
+      primary = getMp3sButton(asin, true);
       items.push(reconvertItem(asin));
       items.push(downloadAaxItem(asin));
       items.push(redownloadItem(asin));
@@ -110,12 +123,12 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
           <span class="htmx-indicator"><span class="spinner"></span></span>
         </button>
         ${hasNotDownloaded ? `
-        <button class="btn btn-primary" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-include="[name='asin']:checked" title="Download checked books from Audible">
-          Download Selected
+        <button class="btn btn-primary" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-include="[name='asin']:checked" title="Fetch checked books from Audible to the server">
+          Fetch Selected
           <span class="htmx-indicator"><span class="spinner"></span></span>
         </button>
-        <button class="btn" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" style="background:var(--surface);border:1px solid var(--border);color:var(--text)" title="Download all not-yet-downloaded books">
-          Download All
+        <button class="btn" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" style="background:var(--surface);border:1px solid var(--border);color:var(--text)" title="Fetch every not-yet-fetched book from Audible to the server">
+          Fetch All
           <span class="htmx-indicator"><span class="spinner"></span></span>
         </button>` : ""}
         <button class="btn" hx-post="/convert/all" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" style="background:var(--surface);border:1px solid var(--border);color:var(--text)" title="Convert all ready AAX files to chapter-split MP3s">
@@ -125,7 +138,10 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
       </div>
 
       <div class="filter-bar">
-        <input type="text" id="search-input" placeholder="Search by title, author, or ASIN..." autocomplete="off">
+        <div class="search-wrap">
+          <input type="text" id="search-input" placeholder="Search by title, author, or ASIN..." autocomplete="off">
+          <button type="button" id="search-clear" class="search-clear" aria-label="Clear search" hidden>&times;</button>
+        </div>
         <div class="filter-pills">
           ${statusDefs.map(s =>
             `<button class="filter-btn active" data-status="${s.value}" aria-pressed="true">${s.label} (${statusCounts[s.value] || 0})</button>`

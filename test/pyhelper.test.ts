@@ -82,3 +82,19 @@ describe("AudibleLibrary with helper", () => {
     assert.ok(row?.not_downloadable_at, "flagged not downloadable");
   });
 });
+
+describe("helper library request", () => {
+  // Regression: the library call omitted the 'contributors' response group,
+  // so the Audible API returned no authors and the Author column was always
+  // empty. Guarded at the source because the real call needs credentials.
+  it("asks Audible for the contributors response group", async () => {
+    const source = await fs.promises.readFile(
+      path.resolve(import.meta.dirname, "..", "helper", "audible_helper.py"),
+      "utf8",
+    );
+    const call = source.slice(source.indexOf("def cmd_library"));
+    const groups = call.match(/response_groups="([^"]+)"/);
+    assert.ok(groups, "library call should set response_groups");
+    assert.match(groups[1], /contributors/, "authors come from 'contributors'");
+  });
+});

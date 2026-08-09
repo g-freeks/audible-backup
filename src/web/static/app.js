@@ -57,9 +57,16 @@
     );
   }
 
+  function syncSearchClear() {
+    var input = document.getElementById("search-input");
+    var clear = document.getElementById("search-clear");
+    if (input && clear) clear.hidden = input.value.length === 0;
+  }
+
   function applyFilters() {
     var input = document.getElementById("search-input");
     var query = input ? input.value.toLowerCase() : "";
+    syncSearchClear();
     var active = {};
     document.querySelectorAll(".filter-btn.active[data-status]").forEach(function (btn) {
       active[btn.dataset.status] = true;
@@ -140,6 +147,16 @@
       return;
     }
 
+    if (e.target.closest("#search-clear")) {
+      var searchInput = document.getElementById("search-input");
+      if (searchInput) {
+        searchInput.value = "";
+        applyFilters();
+        searchInput.focus();
+      }
+      return;
+    }
+
     var pill = e.target.closest(".filter-btn[data-status]");
     if (pill) {
       pill.classList.toggle("active");
@@ -200,8 +217,20 @@
     }
   });
 
-  // When an operation finishes, refresh the books table in place.
+  // When an operation finishes: start the prepared download (if the server
+  // asked for one), then refresh the books table in place.
   document.body.addEventListener("htmx:sseClose", function () {
+    var marker = document.getElementById("op-download");
+    var url = marker && marker.getAttribute("data-download-url");
+    if (url) {
+      marker.removeAttribute("data-download-url");
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
     document.body.dispatchEvent(new CustomEvent("refresh-books"));
   });
 
