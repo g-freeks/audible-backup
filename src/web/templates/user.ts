@@ -1,4 +1,4 @@
-import { layout } from "./layout.ts";
+import { layout, type UserNav } from "./layout.ts";
 import { escapeHtml } from "./html.ts";
 
 export interface UserListEntry {
@@ -80,6 +80,7 @@ export function settingsPage(
   activationBytes: string,
   hasPassword: boolean,
   message?: string,
+  userNav?: UserNav,
 ): string {
   const content = `
     ${formStyles}
@@ -103,5 +104,5 @@ export function settingsPage(
       <a href="/" class="btn btn-ghost">&larr; Back to library</a>
     </div>
   `;
-  return layout("Settings", content);
+  return layout("Settings", content, userNav);
 }

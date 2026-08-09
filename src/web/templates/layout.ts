@@ -1,11 +1,21 @@
 import { escapeHtml } from "./html.ts";
 
 export interface UserNav {
-  current: string;
+  /** Signed-in user; absent in legacy single-user mode (no users registered). */
+  current?: string;
   others: { name: string; hasPassword: boolean }[];
 }
 
 function topbar(userNav: UserNav): string {
+  // Legacy single-user mode: no session to show, but users must still be able
+  // to find the sign-in / add-user flow.
+  if (!userNav.current) {
+    return `<header class="topbar">
+    <span class="topbar-title">Audible Backup</span>
+    <a class="btn btn-sm btn-ghost" href="/login">Sign in / Add user</a>
+  </header>`;
+  }
+
   const items = [
     ...userNav.others.map((u) => {
       const name = escapeHtml(u.name);
