@@ -13,6 +13,11 @@ def emit(obj):
 mode = os.environ.get("FAKE_HELPER_MODE", "ok")
 command = sys.argv[1] if len(sys.argv) > 1 else ""
 
+if mode == "slow":
+    # Long enough that a test can cancel it; killed by the abort signal.
+    import time
+    time.sleep(60)
+
 if mode == "missing":
     emit({"type": "done", "ok": False, "reason": "missing_dependency", "message": "no audible pkg"})
     sys.exit(1)

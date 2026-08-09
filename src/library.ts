@@ -12,6 +12,7 @@ import {
 } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 import { currentUserName, userDirs } from "./users.ts";
+import { operationSignal } from "./operations.ts";
 import {
   runHelper,
   HelperUnavailableError,
@@ -322,6 +323,7 @@ export class AudibleLibrary {
         {
           stdio: ["pipe", "pipe", "pipe"],
           env: audibleEnv(),
+          signal: operationSignal(),
         },
       );
 
@@ -385,6 +387,7 @@ export class AudibleLibrary {
         {
           stdio: ["pipe", "pipe", "pipe"],
           env: audibleEnv(),
+          signal: operationSignal(),
         },
       );
 

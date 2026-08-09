@@ -4,6 +4,7 @@ import * as path from "path";
 import { config } from "./config.ts";
 import { isConverted, markConverted, getIgnoredAsins, getAudiobookByAsin } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
+import { operationSignal } from "./operations.ts";
 
 export interface ChapterInfo {
   length_ms: number;
@@ -181,6 +182,7 @@ export class Converter {
         ],
         {
           stdio: ["pipe", "pipe", "pipe"],
+          signal: operationSignal(),
         },
       );
 
@@ -336,6 +338,7 @@ export class Converter {
         ],
         {
           stdio: ["pipe", "pipe", "pipe"],
+          signal: operationSignal(),
         },
       );
 

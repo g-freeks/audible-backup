@@ -72,7 +72,7 @@ describe("library page in a browser", () => {
   });
 });
 
-describe("operations give visible feedback", () => {
+describe("operation log", () => {
   let ui: UiContext;
 
   before(async () => {
@@ -84,34 +84,126 @@ describe("operations give visible feedback", () => {
     await ui?.close();
   });
 
-  // Regression: hx-select on the container was inherited by these buttons,
-  // so their responses were filtered to nothing and swapped in empty.
-  it("shows the log panel when Sync Library is clicked", async () => {
+  it("keeps the log closed until the user opens it", async () => {
+    assert.equal(await ui.page.locator("#log-float").isVisible(), false);
+    assert.equal(await ui.page.locator("#log-indicator").isVisible(), false);
+
     await ui.page.click('button:has-text("Sync Library")');
-    await ui.page.waitForSelector("#log-float.visible", { timeout: 10000 });
-    const text = await ui.page.locator("#progress-panel").innerText();
-    assert.match(text, /Sync started/, "log panel must render the response");
-    assert.ok(text.trim().length > 0, "panel must not be empty");
+    await ui.page.waitForFunction(
+      () => (document.querySelector("#progress-panel")?.children.length || 0) > 0,
+      { timeout: 10000 },
+    );
+
+    assert.equal(
+      await ui.page.locator("#log-float").isVisible(),
+      false,
+      "an operation must not pop the log open",
+    );
+    assert.equal(
+      await ui.page.locator("#log-indicator").isVisible(),
+      true,
+      "the topbar indicator signals activity instead",
+    );
   });
 
-  it("streams progress log lines over SSE", async () => {
+  it("opens from the topbar and shows the streamed log", async () => {
+    await ui.page.click("#log-toggle");
+    assert.equal(await ui.page.locator("#log-float").isVisible(), true);
+    assert.equal(await ui.page.locator("#log-toggle").getAttribute("aria-expanded"), "true");
+
     await ui.page.waitForFunction(
-      () => {
-        const el = document.querySelector("#progress-panel");
-        return !!el && el.querySelectorAll(".log-line").length > 1;
-      },
+      () => (document.querySelectorAll("#progress-panel .log-line").length || 0) > 1,
       { timeout: 15000 },
     );
-    const lines = await ui.page.locator("#progress-panel .log-line").count();
-    assert.ok(lines > 1, `expected streamed log lines, got ${lines}`);
+    const text = await ui.page.locator("#progress-panel").innerText();
+    assert.match(text, /Sync started/);
   });
 
-  it("shows the log panel when Convert All is clicked", async () => {
+  it("is anchored under the topbar, not the bottom of the page", async () => {
+    const geometry = await ui.page.evaluate(() => {
+      const panel = document.querySelector("#log-float")!.getBoundingClientRect();
+      const bar = document.querySelector(".topbar")!.getBoundingClientRect();
+      return { panelTop: panel.top, barBottom: bar.bottom, viewport: window.innerHeight };
+    });
+    assert.ok(
+      geometry.panelTop >= geometry.barBottom - 2 &&
+        geometry.panelTop < geometry.viewport / 2,
+      `expected the panel just below the topbar, got top=${geometry.panelTop}`,
+    );
+  });
+
+  it("closes again from its own close button", async () => {
+    await ui.page.click("#log-float-close");
+    assert.equal(await ui.page.locator("#log-float").isVisible(), false);
+    assert.equal(await ui.page.locator("#log-toggle").getAttribute("aria-expanded"), "false");
+  });
+
+  it("shows Convert All output in the same panel", async () => {
     await ui.page.reload({ waitUntil: "networkidle" });
     await ui.page.click('button:has-text("Convert All")');
-    await ui.page.waitForSelector("#log-float.visible", { timeout: 10000 });
-    const text = await ui.page.locator("#progress-panel").innerText();
-    assert.match(text, /Conversion started/);
+    await ui.page.click("#log-toggle");
+    await ui.page.waitForFunction(
+      () => /Conversion started/.test(document.querySelector("#progress-panel")?.textContent || ""),
+      { timeout: 10000 },
+    );
+    assert.match(await ui.page.locator("#progress-panel").innerText(), /Conversion started/);
+  });
+});
+
+describe("cancelling a running operation", () => {
+  let ui: UiContext;
+  const FAKE_HELPER = `python3 ${new URL("../resources/fake_helper.py", import.meta.url).pathname}`;
+
+  before(async () => {
+    process.env.AUDIBLE_HELPER = FAKE_HELPER;
+    process.env.FAKE_HELPER_MODE = "slow";
+    ui = await startUi(seedBooks);
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+    delete process.env.AUDIBLE_HELPER;
+    delete process.env.FAKE_HELPER_MODE;
+  });
+
+  it("turns the trigger into Cancel and disables the other actions", async () => {
+    // Locate by attribute: the label deliberately changes to "Cancel".
+    const sync = ui.page.locator('button[hx-post="/library/sync"]');
+    await sync.click();
+    await ui.page.waitForFunction(
+      () => document.body.classList.contains("op-running"),
+      { timeout: 10000 },
+    );
+
+    assert.match((await sync.innerText()).trim(), /Cancel/);
+    assert.equal(await sync.isEnabled(), true, "cancel must stay clickable");
+
+    const convertAll = ui.page.locator('button[hx-post="/convert/all"]');
+    assert.equal(await convertAll.isDisabled(), true, "other operations are blocked");
+    const rowAction = ui.page.locator("#books-table button.split-main").first();
+    assert.equal(await rowAction.isDisabled(), true, "row actions are blocked too");
+  });
+
+  it("stops the operation and restores the buttons", async () => {
+    await ui.page.locator("[data-cancel]").click();
+    await ui.page.waitForFunction(
+      () => !document.body.classList.contains("op-running"),
+      { timeout: 20000 },
+    );
+
+    await ui.page.click("#log-toggle");
+    assert.match(await ui.page.locator("#progress-panel").innerText(), /Cancell?ed/i);
+    assert.equal(
+      await ui.page.locator('button[hx-post="/convert/all"]').isDisabled(),
+      false,
+      "buttons are usable again after cancelling",
+    );
+    assert.match(
+      (await ui.page.locator('button[hx-post="/library/sync"]').innerText()).trim(),
+      /Sync Library/,
+      "the trigger goes back to its original label",
+    );
   });
 });
 
@@ -300,7 +392,7 @@ describe("one-click Get MP3s", () => {
     await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
     const row = ui.page.locator("#books-table tbody tr", { hasText: "Snow Crash" });
     await row.locator(".split-main").click();
-    await ui.page.waitForSelector("#log-float.visible", { timeout: 10000 });
+    await ui.page.click("#log-toggle");
 
     // This book cannot really be fetched here, so the run fails and no
     // download is triggered — exactly the behaviour we want on failure.

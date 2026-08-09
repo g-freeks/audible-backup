@@ -11,6 +11,8 @@ import {
   getActiveOperation,
   startOperation,
   clearOperation,
+  cancelOperation,
+  wasCancelled,
 } from "../operations.ts";
 import { sseStream } from "./sse.ts";
 import { booksPage } from "./templates/books.ts";
@@ -478,7 +480,7 @@ routes.post("/library/sync", (c) => {
     .sync()
     .then(() => reporter.done({ success: true, summary: "Sync complete" }))
     .catch((err: Error) =>
-      reporter.done({ success: false, summary: err.message }),
+      reporter.done({ success: false, summary: failureSummary(err) }),
     )
     .finally(() => clearOperation());
 
@@ -551,7 +553,7 @@ routes.post("/library/download", async (c) => {
     .downloadBooks(books, force)
     .then(() => reporter.done({ success: true, summary: "Download complete" }))
     .catch((err: Error) =>
-      reporter.done({ success: false, summary: err.message }),
+      reporter.done({ success: false, summary: failureSummary(err) }),
     )
     .finally(() => clearOperation());
 
@@ -603,7 +605,7 @@ routes.post("/convert/all", async (c) => {
         reporter.done({ success: true, summary: "Conversion complete" }),
       )
       .catch((err: Error) =>
-        reporter.done({ success: false, summary: err.message }),
+        reporter.done({ success: false, summary: failureSummary(err) }),
       )
       .finally(() => clearOperation());
 
@@ -679,7 +681,7 @@ routes.post("/convert/:asin", async (c) => {
         }),
       )
       .catch((err: Error) =>
-        reporter.done({ success: false, summary: err.message }),
+        reporter.done({ success: false, summary: failureSummary(err) }),
       )
       .finally(() => clearOperation());
 
@@ -694,6 +696,20 @@ routes.post("/convert/:asin", async (c) => {
       400,
     );
   }
+});
+
+/** A cancelled run should say so, not surface the killed child's error. */
+function failureSummary(err: Error): string {
+  return wasCancelled() ? "Cancelled" : err.message;
+}
+
+routes.post("/operation/cancel", (c) => {
+  const op = getActiveOperation();
+  if (!op || op.finished || !ownsOperation(op)) {
+    return c.text("No operation to cancel", 404);
+  }
+  cancelOperation();
+  return c.text("Cancelling");
 });
 
 // --- One-click: fetch from Audible if needed, convert if needed, then hand
@@ -765,7 +781,9 @@ routes.post("/prepare/:asin", async (c) => {
         downloadUrl: `/download/converted/${asin}`,
       }),
     )
-    .catch((err: Error) => reporter.done({ success: false, summary: err.message }))
+    .catch((err: Error) =>
+      reporter.done({ success: false, summary: failureSummary(err) }),
+    )
     .finally(() => clearOperation());
 
   return c.html(
