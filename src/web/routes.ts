@@ -103,9 +103,9 @@ function requestPaths() {
   };
 }
 
-function buildUserNav(): UserNav | undefined {
+function buildUserNav(): UserNav {
   const name = currentUserName();
-  if (!name) return undefined;
+  if (!name) return { others: [] };
   return {
     current: name,
     others: userListEntries().filter((u) => u.name !== name),
@@ -171,7 +171,13 @@ routes.get("/user/settings", (c) => {
   const user = currentUser();
   if (!user) return c.redirect("/login");
   return c.html(
-    settingsPage(user.name, user.activationBytes || "", userHasPassword(user)),
+    settingsPage(
+      user.name,
+      user.activationBytes || "",
+      userHasPassword(user),
+      undefined,
+      buildUserNav(),
+    ),
   );
 });
 
@@ -193,6 +199,7 @@ routes.post("/user/settings", async (c) => {
       updated.activationBytes || "",
       userHasPassword(updated),
       "Settings saved",
+      buildUserNav(),
     ),
   );
 });

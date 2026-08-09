@@ -663,3 +663,45 @@ describe("UI security headers", () => {
     assert.ok(html.includes("&lt;img src=x"), "title is escaped");
   });
 });
+
+// --- User nav discoverability ---
+
+describe("user navigation", () => {
+  it("legacy mode shows a sign-in / add-user entry point", async () => {
+    const res = await app.request("/");
+    const html = await res.text();
+    assert.match(html, /class="topbar"/, "topbar rendered without users");
+    assert.match(html, /href="\/login"/, "links to the login/add-user page");
+    assert.ok(!html.includes("Sign out"), "no session actions in legacy mode");
+  });
+
+  it("shows the user menu and settings link once signed in", async () => {
+    const add = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "alice" }),
+      redirect: "manual",
+    });
+    const cookie = (add.headers.get("set-cookie") || "").split(";")[0];
+
+    const res = await app.request("/", { headers: { cookie } });
+    const html = await res.text();
+    assert.match(html, /class="topbar"/);
+    assert.match(html, /alice/);
+    assert.match(html, /\/user\/settings/);
+    assert.match(html, /Sign out/);
+  });
+
+  it("keeps the topbar on the settings page", async () => {
+    const add = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "bob" }),
+      redirect: "manual",
+    });
+    const cookie = (add.headers.get("set-cookie") || "").split(";")[0];
+
+    const res = await app.request("/user/settings", { headers: { cookie } });
+    const html = await res.text();
+    assert.match(html, /class="topbar"/);
+    assert.match(html, /bob/);
+  });
+});
