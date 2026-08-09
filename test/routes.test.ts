@@ -83,8 +83,8 @@ describe("GET /", () => {
     upsertBook("B000000001", "A1", "T1");
     const res = await app.request("/");
     const html = await res.text();
-    assert.ok(html.includes("Download Selected"));
-    assert.ok(html.includes("Download All"));
+    assert.ok(html.includes("Fetch Selected"));
+    assert.ok(html.includes("Fetch All"));
   });
 
   it("shows both downloaded and not-downloaded books", async () => {
@@ -870,5 +870,56 @@ describe("Audible sign-in flow", () => {
     const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
     assert.match(html, /audible quickstart/);
     delete process.env.FAKE_HELPER_MODE;
+  });
+});
+
+// --- One-click prepare flow ---
+
+describe("POST /prepare/:asin", () => {
+  it("rejects invalid ASINs", async () => {
+    const res = await app.request("/prepare/nope", { method: "POST" });
+    assert.equal(res.status, 400);
+  });
+
+  it("returns a log panel wired to the prepare stream", async () => {
+    markDownloaded("B0PREPARE1", "Author", "Prep Book", "/x.aaxc");
+    const res = await app.request("/prepare/B0PREPARE1", { method: "POST" });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /sse-connect="\/prepare\/stream"/);
+    assert.match(html, /id="op-download"/, "carries the slot for the auto-download");
+  });
+
+  it("refuses to start while another operation runs", async () => {
+    await app.request("/prepare/B0PREPARE1", { method: "POST" });
+    const res = await app.request("/prepare/B0PREPARE2", { method: "POST" });
+    assert.equal(res.status, 409);
+  });
+});
+
+describe("row actions are unambiguous", () => {
+  it("uses one Get MP3s action for every un-converted state", async () => {
+    upsertBook("B0STATE0001", "A", "Not downloaded yet");
+    markDownloaded("B0STATE0002", "A", "Downloaded only", "/x.aaxc");
+    const html = await (await app.request("/")).text();
+
+    assert.equal((html.match(/Get MP3s/g) || []).length, 2, "one per row");
+    assert.match(html, /hx-post="\/prepare\/B0STATE0001"/);
+    assert.match(html, /hx-post="\/prepare\/B0STATE0002"/);
+    assert.ok(!/>Download<\/button>/.test(html), "no bare 'Download' button");
+  });
+
+  it("links converted books straight at the ZIP with the same label", async () => {
+    markDownloaded("B0STATE0003", "A", "Done", "/x.aaxc");
+    markConverted("B0STATE0003", "/out/Done", 3);
+    const html = await (await app.request("/")).text();
+    assert.match(html, /href="\/download\/converted\/B0STATE0003"[^>]*>Get MP3s</);
+  });
+
+  it("names the Audible-side actions distinctly", async () => {
+    markDownloaded("B0STATE0004", "A", "Fetched", "/x.aaxc");
+    const html = await (await app.request("/")).text();
+    assert.match(html, /Save original AAX/);
+    assert.match(html, /Fetch again from Audible/);
   });
 });

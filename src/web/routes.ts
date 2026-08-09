@@ -680,6 +680,91 @@ routes.post("/convert/:asin", async (c) => {
   }
 });
 
+// --- One-click: fetch from Audible if needed, convert if needed, then hand
+// --- the finished ZIP to the browser.
+
+routes.post("/prepare/:asin", async (c) => {
+  const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) {
+    return c.html(
+      '<div class="log-panel"><div class="log-line error">Invalid ASIN</div></div>',
+      400,
+    );
+  }
+  if (isOperationRunning()) {
+    return c.html(
+      '<div class="log-panel"><div class="log-line warn">An operation is already running. Please wait for it to complete.</div></div>',
+      409,
+    );
+  }
+
+  const paths = requestPaths();
+  const reporter = startOperation("prepare");
+
+  const run = async (): Promise<void> => {
+    const row = getAudiobookByAsin(asin);
+
+    if (!row?.downloaded_at) {
+      const library = new AudibleLibrary(paths.targetDir, reporter);
+      const ok = await library.downloadBook(
+        asin,
+        row?.author || "",
+        row?.title || asin,
+        false,
+      );
+      if (!ok) throw new Error("Could not download this book from Audible");
+    }
+
+    if (!isConverted(asin)) {
+      const converter = new Converter(
+        paths.targetDir,
+        paths.outputDir,
+        paths.activationBytes,
+        reporter,
+        false,
+      );
+      const book = converter.findBookFiles().find((b) => b.asin === asin);
+      if (!book) {
+        throw new Error(
+          "Downloaded files for this book were not found, so it cannot be converted",
+        );
+      }
+      const ok = await converter.convertBook(
+        book.aaxFile,
+        book.chapterFile,
+        book.asin,
+        book.bookTitle,
+        book.bookCover,
+        book.voucherFile,
+      );
+      if (!ok) throw new Error("Conversion failed");
+    }
+  };
+
+  run()
+    .then(() =>
+      reporter.done({
+        success: true,
+        summary: "Ready — your download is starting",
+        downloadUrl: `/download/converted/${asin}`,
+      }),
+    )
+    .catch((err: Error) => reporter.done({ success: false, summary: err.message }))
+    .finally(() => clearOperation());
+
+  return c.html(
+    logPanel("/prepare/stream", `Preparing ${asin}...`, queuedSwap(asin)),
+  );
+});
+
+routes.get("/prepare/stream", (c) => {
+  const op = getActiveOperation();
+  if (!op || op.type !== "prepare" || !ownsOperation(op)) {
+    return c.text("No active operation", 404);
+  }
+  return sseStream(c, op.reporter);
+});
+
 routes.get("/convert/stream", (c) => {
   const op = getActiveOperation();
   if (!op || op.type !== "convert" || !ownsOperation(op)) {
@@ -691,6 +776,7 @@ routes.get("/convert/stream", (c) => {
 function logPanel(streamUrl: string, label: string, extra: string = ""): string {
   return `
     <div id="op-progress"></div>
+    <div id="op-download"></div>
     <div class="log-panel"
       hx-ext="sse"
       sse-connect="${streamUrl}"

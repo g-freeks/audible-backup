@@ -206,7 +206,9 @@ def cmd_library():
                 "library",
                 num_results=1000,
                 page=page,
-                response_groups="product_desc,product_attrs",
+                # 'contributors' is what carries authors/narrators; without it
+                # the API returns no authors at all and every row looks blank.
+                response_groups="contributors,product_desc,product_attrs",
             )
             batch = response.get("items") or []
             for item in batch:

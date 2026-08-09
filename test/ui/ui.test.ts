@@ -258,3 +258,86 @@ describe("action menus are not clipped by the table container", () => {
     assert.equal(await ui.page.locator(".action-dropdown.open").count(), 0);
   });
 });
+
+describe("one-click Get MP3s", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedBooks);
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("labels every row action Get MP3s", async () => {
+    const labels = await ui.page.locator("#books-table .split-main").allInnerTexts();
+    assert.ok(labels.length >= 3, "expected several rows");
+    for (const label of labels) {
+      assert.match(label.trim(), /^Get MP3s$/, `unexpected primary label: ${label}`);
+    }
+  });
+
+  it("downloads immediately for a book already converted", async () => {
+    const row = ui.page.locator("#books-table tbody tr", { hasText: "Dune" });
+    const [download] = await Promise.all([
+      ui.page.waitForEvent("download", { timeout: 15000 }),
+      row.locator(".split-main").click(),
+    ]);
+    assert.match(await download.suggestedFilename(), /\.zip$/);
+  });
+
+  // The whole point of the flow: after preparing, the browser starts the ZIP
+  // download on its own without a second click.
+  it("starts the download automatically once preparing finishes", async () => {
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+    const row = ui.page.locator("#books-table tbody tr", { hasText: "Snow Crash" });
+    await row.locator(".split-main").click();
+    await ui.page.waitForSelector("#log-float.visible", { timeout: 10000 });
+
+    // This book cannot really be fetched here, so the run fails and no
+    // download is triggered — exactly the behaviour we want on failure.
+    await ui.page.waitForFunction(
+      () => /log-done/.test(document.querySelector("#progress-panel")?.innerHTML || ""),
+      { timeout: 20000 },
+    );
+    const panel = await ui.page.locator("#progress-panel").innerText();
+    assert.match(panel, /Preparing|Downloading/);
+    const marker = await ui.page.locator("#op-download").getAttribute("data-download-url");
+    assert.equal(marker, null, "no auto-download should be armed after a failure");
+  });
+});
+
+describe("search field", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedBooks);
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("hides the clear button until there is text", async () => {
+    assert.equal(await ui.page.locator("#search-clear").isVisible(), false);
+    await ui.page.fill("#search-input", "dune");
+    assert.equal(await ui.page.locator("#search-clear").isVisible(), true);
+  });
+
+  it("clears the text, restores all rows and refocuses the field", async () => {
+    await ui.page.fill("#search-input", "dune");
+    assert.equal(await ui.page.locator("#books-table tbody tr:visible").count(), 1);
+
+    await ui.page.click("#search-clear");
+    assert.equal(await ui.page.inputValue("#search-input"), "");
+    assert.equal(await ui.page.locator("#books-table tbody tr:visible").count(), 3);
+    assert.equal(await ui.page.locator("#search-clear").isVisible(), false);
+    assert.equal(
+      await ui.page.evaluate(() => document.activeElement?.id),
+      "search-input",
+    );
+  });
+});

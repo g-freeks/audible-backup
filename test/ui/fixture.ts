@@ -125,13 +125,21 @@ async function withFixtureDb(
   process.env.USERS_DIR = prevUsers;
 }
 
-/** A handful of books covering the different row states. */
+/**
+ * A handful of books covering the different row states. The converted one gets
+ * real files on disk so the ZIP download endpoint actually serves it.
+ */
 export async function seedBooks(env: NodeJS.ProcessEnv): Promise<void> {
+  const convertedDir = path.join(env.AUDIBLE_OUTPUT_DIR!, "Dune");
+  fs.mkdirSync(convertedDir, { recursive: true });
+  fs.writeFileSync(path.join(convertedDir, "01 - Chapter One.mp3"), "fake mp3 audio");
+  fs.writeFileSync(path.join(convertedDir, "02 - Chapter Two.mp3"), "more fake audio");
+
   await withFixtureDb(env, (db) => {
     db.upsertBook("B0NOTDOWN1", "Ursula K. Le Guin", "A Wizard of Earthsea");
     db.markDownloaded("B0DOWNLOAD", "Neal Stephenson", "Snow Crash", "/x/B0DOWNLOAD.aaxc");
     db.markDownloaded("B0CONVERT1", "Frank Herbert", "Dune", "/x/B0CONVERT1.aaxc");
-    db.markConverted("B0CONVERT1", "/x/converted/Dune", 42);
+    db.markConverted("B0CONVERT1", convertedDir, 2);
   });
 }
 

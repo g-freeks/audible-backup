@@ -69,7 +69,8 @@ export class EventReporter extends EventEmitter implements ProgressReporter {
   bookDone(asin: string, success: boolean): void {
     this.bufferedEmit("book-done", { asin, success });
   }
-  done(result?: { success: boolean; summary?: string }): void {
+  /** `downloadUrl` asks the browser to start a file download once finished. */
+  done(result?: { success: boolean; summary?: string; downloadUrl?: string }): void {
     this.bufferedEmit("done", result ?? { success: true });
   }
 }

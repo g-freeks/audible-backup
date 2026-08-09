@@ -78,13 +78,24 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
       }
     };
 
-    const onDone = async (result: { success: boolean; summary?: string }) => {
+    const onDone = async (result: {
+      success: boolean;
+      summary?: string;
+      downloadUrl?: string;
+    }) => {
       if (closed) return;
       try {
         await stream.writeSSE({
           data: `<div id="op-progress" hx-swap-oob="true"></div>`,
           event: "log",
         });
+        if (result.success && result.downloadUrl) {
+          // app.js picks this up when the stream closes and starts the download.
+          await stream.writeSSE({
+            data: `<div id="op-download" hx-swap-oob="true" data-download-url="${escapeHtml(result.downloadUrl)}"></div>`,
+            event: "log",
+          });
+        }
         await stream.writeSSE({
           data: `<div class="log-done ${result.success ? "success" : "error"}">${escapeHtml(result.summary || "Done")}</div>`,
           event: "log",

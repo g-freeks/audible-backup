@@ -259,17 +259,33 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       margin-bottom: 1rem;
       flex-wrap: wrap;
     }
+    .search-wrap { position: relative; display: flex; flex: 0 1 22rem; min-width: 19rem; }
     .filter-bar input {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--text);
-      padding: 0.45rem 0.75rem;
+      padding: 0.45rem 2rem 0.45rem 0.75rem;
       font-size: 0.85rem;
       outline: none;
-      min-width: 19rem;
-      flex: 0 1 22rem;
+      width: 100%;
     }
+    .search-clear {
+      position: absolute;
+      right: 0.4rem;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 0.3rem;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .search-clear:hover { color: var(--text); background: var(--surface2); }
+    .search-clear[hidden] { display: none; }
     .filter-bar input:focus { border-color: var(--accent); }
     .filter-pills { display: flex; gap: 0.35rem; flex-wrap: wrap; }
     .filter-btn {
