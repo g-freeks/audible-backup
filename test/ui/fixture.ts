@@ -152,3 +152,16 @@ export async function seedManyBooks(env: NodeJS.ProcessEnv): Promise<void> {
     }
   });
 }
+
+/** One book whose author name is long enough to break a naive table layout. */
+export async function seedLongAuthor(env: NodeJS.ProcessEnv): Promise<void> {
+  await withFixtureDb(env, (db) => {
+    db.markDownloaded(
+      "B0LONGAUTH",
+      "Wolfgang Amadeus Hieronymus Bartholomew Featherstonehaugh von Habsburg III",
+      "The Very Long Author Book",
+      "/x/B0LONGAUTH.aaxc",
+    );
+    db.markDownloaded("B0SHORTAUT", "Iain M. Banks", "Consider Phlebas", "/x/B0SHORTAUT.aaxc");
+  });
+}

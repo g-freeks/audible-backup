@@ -28,6 +28,9 @@ const formStyles = `
     .auth-card .steps li { list-style: decimal; }
     .auth-card a { color: var(--accent); }
     .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
+    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .danger-zone { border-color: rgba(248, 113, 113, 0.4); }
+    .danger-zone h2 { color: var(--danger); }
   </style>
 `;
 
@@ -193,6 +196,17 @@ export function settingsPage(view: SettingsView): string {
           <button class="btn btn-primary" type="submit">Save</button>
         </form>
       </div>
+      <div class="auth-card danger-zone">
+        <h2>Reset library database</h2>
+        <p class="hint">Clears this user's library list — every book, its
+        download and conversion state. <strong>Files on disk are kept</strong>;
+        a later sync re-imports whatever is still there.</p>
+        <form method="post" action="/user/reset-db"
+              data-confirm="Reset the library database for this user? Downloaded files are kept, but the library list is cleared.">
+          <button class="btn btn-danger" type="submit">Reset database</button>
+        </form>
+      </div>
+
       <a href="/" class="btn btn-ghost">&larr; Back to library</a>
     </div>
   `;

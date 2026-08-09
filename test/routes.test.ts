@@ -48,7 +48,7 @@ describe("GET /", () => {
     const res = await app.request("/");
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.ok(html.includes("Books"));
+    assert.ok(html.includes("books-table") || html.includes("No books in database"));
   });
 
   it("shows books in the table", async () => {
@@ -921,5 +921,66 @@ describe("row actions are unambiguous", () => {
     const html = await (await app.request("/")).text();
     assert.match(html, /Save original AAX/);
     assert.match(html, /Fetch again from Audible/);
+  });
+});
+
+// --- Layout tweaks and database reset ---
+
+describe("books table layout", () => {
+  it("drops the redundant page heading", async () => {
+    const html = await (await app.request("/")).text();
+    assert.ok(!/<h1>Books<\/h1>/.test(html), "single-page app needs no 'Books' heading");
+  });
+
+  it("constrains the author column and keeps the full value reachable", async () => {
+    const longAuthor = "Wolfgang Amadeus Hieronymus Bartholomew Featherstonehaugh III";
+    markDownloaded("B0LONGAUTH", longAuthor, "Some Book", "/x.aaxc");
+    const html = await (await app.request("/")).text();
+    assert.match(html, /<th class="sortable col-author"/);
+    assert.match(html, new RegExp(`<td class="col-author"[^>]*title="${longAuthor}"`));
+  });
+});
+
+describe("POST /user/reset-db", () => {
+  async function signedIn(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("offers the reset with a confirmation prompt on the settings page", async () => {
+    const cookie = await signedIn("alice");
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(html, /action="\/user\/reset-db"/);
+    assert.match(html, /data-confirm="[^"]*Reset the library database/);
+    assert.match(html, /Files on disk are kept|files on disk are kept/i);
+  });
+
+  it("clears that user's library only", async () => {
+    const alice = await signedIn("alice");
+    const bob = await signedIn("bob");
+    const { runWithUser } = await import("../src/users.ts");
+    runWithUser("alice", () => markDownloaded("B0RESET0001", "A", "Alice Book", "/a.aaxc"));
+    runWithUser("bob", () => markDownloaded("B0RESET0002", "B", "Bob Book", "/b.aaxc"));
+
+    const res = await app.request("/user/reset-db", { method: "POST", headers: { cookie: alice } });
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /database reset/i);
+
+    const aliceBooks = await (await app.request("/api/books", { headers: { cookie: alice } })).json();
+    const bobBooks = await (await app.request("/api/books", { headers: { cookie: bob } })).json();
+    assert.equal(aliceBooks.length, 0, "alice's library is cleared");
+    assert.equal(bobBooks.length, 1, "bob's library is untouched");
+  });
+
+  it("refuses while an operation is running", async () => {
+    const cookie = await signedIn("alice");
+    await app.request("/library/sync", { method: "POST", headers: { cookie } });
+    const res = await app.request("/user/reset-db", { method: "POST", headers: { cookie } });
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /operation is running/i);
   });
 });

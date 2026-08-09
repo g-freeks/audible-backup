@@ -1,6 +1,12 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { startUi, seedBooks, seedManyBooks, type UiContext } from "./fixture.ts";
+import {
+  startUi,
+  seedBooks,
+  seedManyBooks,
+  seedLongAuthor,
+  type UiContext,
+} from "./fixture.ts";
 
 /**
  * Browser tests. Every case here covers a failure mode that HTML-level tests
@@ -339,5 +345,88 @@ describe("search field", () => {
       await ui.page.evaluate(() => document.activeElement?.id),
       "search-input",
     );
+  });
+});
+
+describe("table layout", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedLongAuthor);
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("has no redundant page heading", async () => {
+    assert.equal(await ui.page.locator("main h1").count(), 0);
+  });
+
+  // Regression: a very long author used to widen its column and force the
+  // other columns to wrap.
+  it("truncates a long author instead of reflowing the table", async () => {
+    const measured = await ui.page.evaluate(() => {
+      const cells = Array.from(document.querySelectorAll("td.col-author"));
+      const long = cells.find((c) => (c as HTMLElement).title.includes("Featherstonehaugh"));
+      const short = cells.find((c) => (c as HTMLElement).title.includes("Banks"));
+      if (!long || !short) return null;
+      const style = getComputedStyle(long);
+      return {
+        truncated: long.scrollWidth > long.clientWidth,
+        whiteSpace: style.whiteSpace,
+        textOverflow: style.textOverflow,
+        fullNameKept: (long as HTMLElement).title.length > 40,
+        sameRowHeight:
+          Math.abs(
+            long.closest("tr")!.getBoundingClientRect().height -
+              short.closest("tr")!.getBoundingClientRect().height,
+          ) < 2,
+      };
+    });
+
+    assert.ok(measured, "author cells should be present");
+    assert.ok(measured.truncated, "long author should overflow its capped cell");
+    assert.equal(measured.whiteSpace, "nowrap");
+    assert.equal(measured.textOverflow, "ellipsis");
+    assert.ok(measured.fullNameKept, "full author stays available as a tooltip");
+    assert.ok(measured.sameRowHeight, "long author must not make its row taller");
+  });
+});
+
+describe("reset database from settings", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi();
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+    await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("does nothing when the confirmation is dismissed", async () => {
+    ui.page.once("dialog", (d) => d.dismiss());
+    await ui.page.click('form[action="/user/reset-db"] button');
+    await ui.page.waitForTimeout(300);
+    const body = await ui.page.locator(".auth-wrap").innerText();
+    assert.ok(!/database reset/i.test(body), "reset must not run when cancelled");
+  });
+
+  it("resets after confirming", async () => {
+    ui.page.once("dialog", async (d) => {
+      assert.match(d.message(), /Reset the library database/i);
+      await d.accept();
+    });
+    await ui.page.click('form[action="/user/reset-db"] button');
+    await ui.page.waitForLoadState("networkidle");
+    const body = await ui.page.locator(".auth-wrap").innerText();
+    assert.match(body, /database reset/i);
   });
 });

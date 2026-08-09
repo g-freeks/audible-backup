@@ -216,7 +216,14 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       flex-direction: column;
       height: calc(100vh - 4rem);
     }
-    .library-layout h1 { flex-shrink: 0; }
+    /* A long author must not stretch the column and squeeze everything else;
+       the full value stays available through the cell's title attribute. */
+    .col-author { max-width: 16rem; }
+    td.col-author {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .library-layout .actions { flex-shrink: 0; }
     .table-scroll {
       flex: 1;
