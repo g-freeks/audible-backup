@@ -106,8 +106,11 @@ export async function startUi(
   };
 }
 
-/** Seed books straight into the user-less (legacy) database. */
-export async function seedBooks(env: NodeJS.ProcessEnv): Promise<void> {
+/** Run a seeding callback against the fixture's (user-less) database. */
+async function withFixtureDb(
+  env: NodeJS.ProcessEnv,
+  fn: (db: typeof import("../../src/db.ts")) => void,
+): Promise<void> {
   const prevDb = process.env.DB_PATH;
   const prevUsers = process.env.USERS_DIR;
   process.env.DB_PATH = env.DB_PATH;
@@ -115,12 +118,29 @@ export async function seedBooks(env: NodeJS.ProcessEnv): Promise<void> {
 
   const db = await import("../../src/db.ts");
   db.closeDb();
-  db.upsertBook("B0NOTDOWN1", "Ursula K. Le Guin", "A Wizard of Earthsea");
-  db.markDownloaded("B0DOWNLOAD", "Neal Stephenson", "Snow Crash", "/x/B0DOWNLOAD.aaxc");
-  db.markDownloaded("B0CONVERT1", "Frank Herbert", "Dune", "/x/B0CONVERT1.aaxc");
-  db.markConverted("B0CONVERT1", "/x/converted/Dune", 42);
+  fn(db);
   db.closeDb();
 
   process.env.DB_PATH = prevDb;
   process.env.USERS_DIR = prevUsers;
+}
+
+/** A handful of books covering the different row states. */
+export async function seedBooks(env: NodeJS.ProcessEnv): Promise<void> {
+  await withFixtureDb(env, (db) => {
+    db.upsertBook("B0NOTDOWN1", "Ursula K. Le Guin", "A Wizard of Earthsea");
+    db.markDownloaded("B0DOWNLOAD", "Neal Stephenson", "Snow Crash", "/x/B0DOWNLOAD.aaxc");
+    db.markDownloaded("B0CONVERT1", "Frank Herbert", "Dune", "/x/B0CONVERT1.aaxc");
+    db.markConverted("B0CONVERT1", "/x/converted/Dune", 42);
+  });
+}
+
+/** Enough books that the table overflows its scroll container. */
+export async function seedManyBooks(env: NodeJS.ProcessEnv): Promise<void> {
+  await withFixtureDb(env, (db) => {
+    for (let i = 1; i <= 14; i++) {
+      const asin = `B0MENU${String(i).padStart(5, "0")}`;
+      db.markDownloaded(asin, `Author ${i}`, `Book Number ${i}`, `/x/${asin}.aaxc`);
+    }
+  });
 }

@@ -23,6 +23,34 @@
     });
   }
 
+  /**
+   * Place an open menu next to its toggle. The menu is position:fixed so it
+   * escapes the table's scroll container; it flips above the button when there
+   * is not enough room below, and is clamped to the viewport horizontally.
+   */
+  function positionMenu(dropdown, toggle) {
+    var menu = dropdown.querySelector(".dropdown-menu");
+    if (!menu) return;
+    var pad = 8;
+    var gap = 2;
+    var rect = toggle.getBoundingClientRect();
+    var width = menu.offsetWidth;
+    var height = menu.offsetHeight;
+
+    var top = rect.bottom + gap;
+    if (top + height > window.innerHeight - pad) {
+      var above = rect.top - height - gap;
+      top = above >= pad ? above : Math.max(pad, window.innerHeight - height - pad);
+    }
+
+    var left = rect.right - width;
+    if (left + width > window.innerWidth - pad) left = window.innerWidth - width - pad;
+    if (left < pad) left = pad;
+
+    menu.style.top = top + "px";
+    menu.style.left = left + "px";
+  }
+
   function rows() {
     return Array.prototype.slice.call(
       document.querySelectorAll("#books-table tbody tr[data-status]"),
@@ -85,8 +113,14 @@
     var toggle = e.target.closest("[data-dropdown-toggle]");
     if (toggle) {
       var dd = toggle.closest(".action-dropdown");
-      var open = dd.classList.toggle("open");
-      toggle.setAttribute("aria-expanded", String(open));
+      var willOpen = !dd.classList.contains("open");
+      closeDropdowns();
+      if (willOpen) {
+        dd.classList.add("open");
+        toggle.setAttribute("aria-expanded", "true");
+        positionMenu(dd, toggle);
+      }
+      return;
     }
     closeDropdowns(e.target);
 
@@ -126,6 +160,12 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") closeDropdowns();
   });
+
+  // A fixed menu would drift away from its button once anything scrolls or the
+  // viewport changes, so close instead of chasing it. Capture phase catches
+  // scrolling inside the table container too.
+  document.addEventListener("scroll", function () { closeDropdowns(); }, true);
+  window.addEventListener("resize", function () { closeDropdowns(); });
 
   document.addEventListener("input", function (e) {
     if (e.target.id === "search-input") applyFilters();

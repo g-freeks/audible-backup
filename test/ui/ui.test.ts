@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { startUi, seedBooks, type UiContext } from "./fixture.ts";
+import { startUi, seedBooks, seedManyBooks, type UiContext } from "./fixture.ts";
 
 /**
  * Browser tests. Every case here covers a failure mode that HTML-level tests
@@ -188,5 +188,73 @@ describe("Audible sign-in from the settings page", () => {
       ui.consoleErrors.filter((e) => /Content Security Policy/i.test(e)),
       [],
     );
+  });
+});
+
+describe("action menus are not clipped by the table container", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedManyBooks);
+    await ui.page.setViewportSize({ width: 1280, height: 700 });
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  // Regression: the table sits in an overflow:auto scroller, which clipped an
+  // absolutely-positioned menu opened on one of the last rows.
+  it("shows the last row's menu fully, flipped above the button", async () => {
+    const toggles = ui.page.locator("#books-table [data-dropdown-toggle]");
+    const last = (await toggles.count()) - 1;
+    await toggles.nth(last).scrollIntoViewIfNeeded();
+    await toggles.nth(last).click();
+
+    const geometry = await ui.page.evaluate(() => {
+      const menu = document.querySelector(".action-dropdown.open .dropdown-menu");
+      const button = document.querySelector(".action-dropdown.open [data-dropdown-toggle]");
+      if (!menu || !button) return null;
+      const m = menu.getBoundingClientRect();
+      const b = button.getBoundingClientRect();
+      const probe = document.elementFromPoint(m.left + m.width / 2, m.top + 6);
+      return {
+        insideViewport:
+          m.top >= 0 && m.bottom <= window.innerHeight + 1 &&
+          m.left >= 0 && m.right <= window.innerWidth + 1,
+        visibleAtTop: !!(probe && probe.closest(".dropdown-menu")),
+        opensUpward: m.bottom <= b.top + 1,
+      };
+    });
+
+    assert.ok(geometry, "a menu should be open");
+    assert.ok(geometry.insideViewport, "menu must be fully within the viewport");
+    assert.ok(geometry.visibleAtTop, "menu must not be clipped away by the scroller");
+    assert.ok(geometry.opensUpward, "menu should flip above the button near the bottom");
+  });
+
+  it("keeps the first row's menu below its button", async () => {
+    await ui.page.keyboard.press("Escape");
+    const toggle = ui.page.locator("#books-table [data-dropdown-toggle]").first();
+    await toggle.scrollIntoViewIfNeeded();
+    await toggle.click();
+    const below = await ui.page.evaluate(() => {
+      const menu = document.querySelector(".action-dropdown.open .dropdown-menu");
+      const button = document.querySelector(".action-dropdown.open [data-dropdown-toggle]");
+      if (!menu || !button) return false;
+      return menu.getBoundingClientRect().top >= button.getBoundingClientRect().bottom - 1;
+    });
+    assert.ok(below, "menu should open downward when there is room");
+  });
+
+  it("closes an open menu when the table scrolls", async () => {
+    await ui.page.keyboard.press("Escape");
+    const toggle = ui.page.locator("#books-table [data-dropdown-toggle]").first();
+    await toggle.click();
+    assert.equal(await ui.page.locator(".action-dropdown.open").count(), 1);
+    await ui.page.locator(".table-scroll").evaluate((el) => (el.scrollTop = el.scrollTop + 120));
+    await ui.page.waitForTimeout(150);
+    assert.equal(await ui.page.locator(".action-dropdown.open").count(), 0);
   });
 });

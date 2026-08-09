@@ -304,12 +304,13 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       padding: 0.3rem 0.35rem;
       font-size: 0.65rem;
     }
+    /* Fixed, not absolute: the table lives in an overflow:auto scroller, which
+       would clip a menu opened on one of the last rows. Coordinates are set by
+       app.js when the menu opens. */
     .dropdown-menu {
       display: none;
-      position: absolute;
-      top: 100%;
-      right: 0;
-      z-index: 50;
+      position: fixed;
+      z-index: 200;
       min-width: 140px;
       background: var(--surface);
       border: 1px solid var(--border);
