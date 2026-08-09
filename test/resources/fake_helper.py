@@ -17,7 +17,36 @@ if mode == "missing":
     emit({"type": "done", "ok": False, "reason": "missing_dependency", "message": "no audible pkg"})
     sys.exit(1)
 
-if command == "library":
+config_dir = pathlib.Path(os.environ.get("AUDIBLE_CONFIG_DIR") or "/tmp/fake-audible")
+
+if command == "login-status":
+    linked = (config_dir / "config.toml").exists()
+    emit({"type": "done", "ok": True, "linked": linked, "marketplace": "de" if linked else ""})
+elif command == "login-url":
+    marketplace = sys.argv[2]
+    if marketplace not in ("de", "us", "uk", "fr", "ca", "it", "au", "in", "jp", "es", "br"):
+        emit({"type": "done", "ok": False, "reason": "bad_args", "message": f"Unknown marketplace: {marketplace}"})
+        sys.exit(1)
+    emit({
+        "type": "done", "ok": True,
+        "url": f"https://www.amazon.{marketplace}/ap/signin?openid.oa2.response_type=code&fake=1",
+        "serial": "FAKESERIAL0123456789012345678901",
+        "code_verifier": "ZmFrZS1jb2RlLXZlcmlmaWVyLWZvci10ZXN0aW5nLXB1cnA=",
+        "marketplace": marketplace,
+    })
+elif command == "login-complete":
+    marketplace, serial, verifier, url = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+    if "authorization_code" not in url:
+        emit({"type": "done", "ok": False, "reason": "bad_redirect_url", "message": "That URL has no authorization code."})
+        sys.exit(1)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "audible_backup.json").write_text("{}")
+    (config_dir / "config.toml").write_text(
+        'title = "Audible Config File"\n\n[APP]\nprimary_profile = "audible_backup"\n\n'
+        f'[profile.audible_backup]\nauth_file = "audible_backup.json"\ncountry_code = "{marketplace}"\n'
+    )
+    emit({"type": "done", "ok": True, "marketplace": marketplace, "account": "Test User"})
+elif command == "library":
     emit({"type": "log", "message": "fake library fetch"})
     emit({
         "type": "done", "ok": True,

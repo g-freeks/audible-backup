@@ -26,15 +26,25 @@ docker compose build && docker compose up -d
 ```
 
 Open http://localhost:3000 — you'll be asked to create the first user
-(password optional, activation bytes can be set later in Settings). Then log
-that user in to Audible once. **This is a one-time command-line step; there is
-no Audible sign-in flow in the web UI.** Credentials persist in the volume, and
-"Sync Library" will report an error until this is done:
+(password optional). Then connect that user's Audible account from
+**Settings → Connect Audible**:
+
+1. Pick your marketplace and press **Start sign-in**.
+2. Open the link that appears and sign in **on Audible's own page** — this app
+   never sees your password, and 2FA/CAPTCHA are handled by Amazon.
+3. Afterwards your browser lands on a page that fails to load. That's expected:
+   copy its full address and paste it back into the form.
+
+Credentials persist in the volume, so this is a one-time step per user.
+
+<details>
+<summary>Command-line alternative</summary>
 
 ```bash
 docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/<name>/audible \
   audible-backup audible quickstart
 ```
+</details>
 
 Get the user's activation bytes with `audible activation-bytes` (same
 `AUDIBLE_CONFIG_DIR`) and paste them into the web UI under **Settings**.
