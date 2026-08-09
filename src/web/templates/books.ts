@@ -97,7 +97,11 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
     { value: "ignored", label: "Ignored" },
   ];
   const content = `
-    <div class="library-layout" hx-get="/" hx-select=".library-layout" hx-swap="outerHTML" hx-trigger="refresh-books from:body">
+    <!-- Refresher lives OUTSIDE .library-layout on purpose: hx-select is an
+         inherited attribute, so placing it on the container would apply it to
+         every action button's response and swap in nothing. -->
+    <div hx-get="/" hx-select=".library-layout" hx-target=".library-layout" hx-swap="outerHTML" hx-trigger="refresh-books from:body"></div>
+    <div class="library-layout">
       <h1>Books</h1>
 
       <div class="actions">
