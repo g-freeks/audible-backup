@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { AudibleLibrary } from "../src/library.ts";
+import { AudibleLibrary, describeAudibleCliError } from "../src/library.ts";
 import { closeDb, getDownloadedAsins } from "../src/db.ts";
 
 let dbDir: string;
@@ -98,5 +98,25 @@ describe("AudibleLibrary.ensureTargetDirectory", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lib-exists-"));
     assert.doesNotThrow(() => new AudibleLibrary(tmp));
     fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+describe("describeAudibleCliError", () => {
+  it("explains a missing audible-cli binary", () => {
+    const msg = describeAudibleCliError(new Error("/bin/sh: 1: audible: not found"));
+    assert.match(msg, /not installed or not on PATH/);
+    assert.match(msg, /pipx install audible-cli/);
+  });
+
+  it("points at the one-time quickstart for auth failures", () => {
+    const msg = describeAudibleCliError(new Error("no profile found in config"));
+    assert.match(msg, /sign-in required/i);
+    assert.match(msg, /audible quickstart/);
+  });
+
+  it("falls back to the raw error otherwise", () => {
+    const msg = describeAudibleCliError(new Error("kaboom"));
+    assert.match(msg, /Failed to get library list/);
+    assert.match(msg, /kaboom/);
   });
 });

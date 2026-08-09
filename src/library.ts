@@ -18,6 +18,33 @@ import {
   type HelperLibraryItem,
 } from "./pyhelper.ts";
 
+/**
+ * Turn an audible-cli failure into something actionable. Signing in is a
+ * one-time command-line step (there is no web flow for it), so say so.
+ */
+export function describeAudibleCliError(error: unknown): string {
+  const text = String(error);
+  const user = currentUserName();
+  const configHint = user
+    ? `docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/${user}/audible audible-backup audible quickstart`
+    : "docker compose exec audible-backup audible quickstart";
+
+  if (/not found|ENOENT/i.test(text)) {
+    return (
+      "audible-cli is not installed or not on PATH. It ships with the Docker " +
+      "image; if you are running outside Docker, install it with " +
+      "'pipx install audible-cli'."
+    );
+  }
+  if (/auth|login|profile|config|credential|unauthorized|401/i.test(text)) {
+    return (
+      `Audible sign-in required${user ? ` for user '${user}'` : ""}. ` +
+      `Signing in is a one-time command-line step:\n  ${configHint}`
+    );
+  }
+  return `Failed to get library list: ${text}`;
+}
+
 /** Env for audible-cli invocations: per-user config dir in multi-tenant mode. */
 function audibleEnv(): NodeJS.ProcessEnv {
   const userName = currentUserName();
@@ -150,7 +177,7 @@ export class AudibleLibrary {
 
       return entries;
     } catch (error) {
-      throw new Error(`Failed to get library list: ${error}`);
+      throw new Error(describeAudibleCliError(error));
     }
   }
 

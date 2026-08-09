@@ -27,7 +27,9 @@ docker compose build && docker compose up -d
 
 Open http://localhost:3000 — you'll be asked to create the first user
 (password optional, activation bytes can be set later in Settings). Then log
-that user in to Audible once (credentials persist in the volume):
+that user in to Audible once. **This is a one-time command-line step; there is
+no Audible sign-in flow in the web UI.** Credentials persist in the volume, and
+"Sync Library" will report an error until this is done:
 
 ```bash
 docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/<name>/audible \

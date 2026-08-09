@@ -705,3 +705,36 @@ describe("user navigation", () => {
     assert.match(html, /bob/);
   });
 });
+
+// --- htmx attribute inheritance regression ---
+
+describe("action buttons are not affected by inherited hx-select", () => {
+  it("keeps hx-select off the container that holds the action buttons", async () => {
+    const res = await app.request("/");
+    const html = await res.text();
+    const container = html.match(/<div class="library-layout"[^>]*>/);
+    assert.ok(container, "library-layout container present");
+    assert.ok(
+      !container[0].includes("hx-select"),
+      "hx-select on the container is inherited by every action button and " +
+        "makes their responses swap in empty content",
+    );
+  });
+
+  it("still wires up the auto-refresh trigger outside that container", async () => {
+    const res = await app.request("/");
+    const html = await res.text();
+    const refresher = html.match(/<div[^>]*hx-trigger="refresh-books from:body"[^>]*>/);
+    assert.ok(refresher, "refresher element present");
+    assert.ok(refresher[0].includes('hx-select=".library-layout"'));
+    assert.ok(refresher[0].includes('hx-target=".library-layout"'));
+  });
+
+  it("sync returns a log panel that references the SSE stream", async () => {
+    const res = await app.request("/library/sync", { method: "POST" });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /sse-connect="\/library\/sync\/stream"/);
+    assert.match(html, /log-panel/);
+  });
+});
