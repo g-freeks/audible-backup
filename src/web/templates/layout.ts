@@ -6,13 +6,22 @@ export interface UserNav {
   others: { name: string; hasPassword: boolean }[];
 }
 
+/** Opens the operation log, which stays closed until asked for. */
+const logToggle = `<button id="log-toggle" class="btn btn-sm btn-ghost" type="button"
+      aria-expanded="false" aria-controls="log-float" title="Show the operation log">
+      Log <span id="log-indicator" class="log-dot" hidden></span>
+    </button>`;
+
 function topbar(userNav: UserNav): string {
   // Legacy single-user mode: no session to show, but users must still be able
   // to find the sign-in / add-user flow.
   if (!userNav.current) {
     return `<header class="topbar">
     <span class="topbar-title">Audible Backup</span>
-    <a class="btn btn-sm btn-ghost" href="/login">Sign in / Add user</a>
+    <div class="topbar-actions">
+      ${logToggle}
+      <a class="btn btn-sm btn-ghost" href="/login">Sign in / Add user</a>
+    </div>
   </header>`;
   }
 
@@ -31,9 +40,12 @@ function topbar(userNav: UserNav): string {
 
   return `<header class="topbar">
     <span class="topbar-title">Audible Backup</span>
-    <div class="action-dropdown">
-      <button class="btn btn-sm btn-ghost" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false">${escapeHtml(userNav.current)} &#9662;</button>
-      <div class="dropdown-menu">${items}</div>
+    <div class="topbar-actions">
+      ${logToggle}
+      <div class="action-dropdown">
+        <button class="btn btn-sm btn-ghost" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false">${escapeHtml(userNav.current)} &#9662;</button>
+        <div class="dropdown-menu">${items}</div>
+      </div>
     </div>
   </header>`;
 }
@@ -152,25 +164,24 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     .log-done { padding-top: 0.5rem; border-top: 1px solid var(--border); margin-top: 0.5rem; font-weight: 600; }
     .log-done.success { color: var(--success); }
     .log-done.error { color: var(--danger); }
+    /* Anchored under the topbar button that opens it. Closed until asked for:
+       operations only light up the indicator on that button. */
     #log-float {
       position: fixed;
-      bottom: 1rem;
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(800px, calc(100% - 2rem));
-      z-index: 100;
+      top: 3.1rem;
+      right: 1rem;
+      width: min(700px, calc(100% - 2rem));
+      max-height: min(60vh, 520px);
+      z-index: 150;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px;
-      box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
       display: none;
       flex-direction: column;
       overflow: hidden;
     }
     #log-float.visible { display: flex; }
-    #log-float.minimized { width: auto; min-width: 260px; }
-    #log-float.minimized .log-panel,
-    #log-float.minimized #op-progress { display: none; }
     #log-float-header {
       display: flex;
       align-items: center;
@@ -184,7 +195,6 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       cursor: default;
       user-select: none;
     }
-    #log-float.minimized #log-float-header { border-bottom: none; }
     #log-float-header button {
       background: none;
       border: none;
@@ -196,15 +206,21 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       transition: color 0.15s;
     }
     #log-float-header button:hover { color: var(--text); }
-    #log-float-reload {
-      background: var(--accent);
-      color: #fff;
-      border-radius: 4px;
-      padding: 0.15rem 0.5rem;
-      font-size: 0.75rem;
-      font-weight: 500;
+    #log-float .log-panel { flex: 1; }
+    .log-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      margin-left: 0.15rem;
+      vertical-align: middle;
     }
-    #log-float-reload:hover { background: var(--accent-hover); }
+    .log-dot[hidden] { display: none; }
+    .log-dot.running { background: var(--accent); animation: log-pulse 1.2s ease-in-out infinite; }
+    .log-dot.done { background: var(--success); }
+    .log-dot.failed { background: var(--danger); }
+    @keyframes log-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
     .empty { text-align: center; padding: 3rem; color: var(--text-muted); }
     .actions { margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
     .htmx-indicator { display: none; }
@@ -367,6 +383,7 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       border-bottom: 1px solid var(--border);
     }
     .topbar-title { font-weight: 600; font-size: 0.95rem; }
+    .topbar-actions { display: flex; align-items: center; gap: 0.5rem; }
     .topbar .dropdown-menu form { display: block; }
     body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
     #toast-region {
@@ -394,11 +411,11 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
   ${userNav ? topbar(userNav) : ""}
   <main>${content}</main>
   <div id="toast-region" role="status" aria-live="polite"></div>
-  <div id="log-float">
+  <div id="log-float" role="region" aria-label="Operation log">
     <div id="log-float-header">
       <span id="log-float-title">Operation Log</span>
       <div>
-        <button id="log-float-minimize" title="Minimize" aria-label="Minimize operation log">&#x2015;</button>
+        <button id="log-float-close" title="Close" aria-label="Close operation log">&times;</button>
       </div>
     </div>
     <div id="progress-panel"></div>

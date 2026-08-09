@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import * as path from "path";
 import { currentUserName, userDirs } from "./users.ts";
+import { operationSignal } from "./operations.ts";
 
 /**
  * Wrapper around helper/audible_helper.py — a JSON-over-stdout bridge to the
@@ -50,9 +51,11 @@ export function runHelper(
 ): Promise<HelperEvent> {
   return new Promise((resolve, reject) => {
     const [cmd, ...preArgs] = helperCommand();
+    const signal = operationSignal();
     const proc = spawn(cmd, [...preArgs, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
       env: helperEnv(),
+      signal,
     });
 
     let doneEvent: HelperEvent | null = null;
@@ -85,6 +88,11 @@ export function runHelper(
     });
 
     proc.on("error", (err) => {
+      // An abort is a cancellation, not a missing helper.
+      if (signal?.aborted) {
+        reject(new Error("Cancelled"));
+        return;
+      }
       reject(new HelperUnavailableError(`Helper could not start: ${err.message}`));
     });
 

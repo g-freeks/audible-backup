@@ -116,7 +116,35 @@
   }
 
   // ---- Delegated events ----
+  // Capture phase: a button turned into "Cancel" still carries its original
+  // hx-post, so stop the event before htmx's own listener sees it.
   document.addEventListener("click", function (e) {
+    var cancelBtn = e.target.closest("[data-cancel]");
+    if (!cancelBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancelBtn.disabled = true;
+    fetch("/operation/cancel", { method: "POST" }).catch(function (err) {
+      toast("Could not cancel: " + err.message, true);
+    });
+  }, true);
+
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("#log-toggle")) {
+      var open = !isLogOpen();
+      setLogOpen(open);
+      if (open) setIndicator(document.body.classList.contains("op-running") ? "running" : null);
+      return;
+    }
+    if (e.target.closest("#log-float-close")) {
+      setLogOpen(false);
+      return;
+    }
+
+    // Remember which control started an operation so it can become Cancel.
+    var trigger = e.target.closest("button[hx-post]");
+    if (trigger && !trigger.hasAttribute("data-cancel")) activeTrigger = trigger;
+
     var toggle = e.target.closest("[data-dropdown-toggle]");
     if (toggle) {
       var dd = toggle.closest(".action-dropdown");
@@ -168,10 +196,6 @@
     var th = e.target.closest("th.sortable");
     if (th) sortBy(th);
 
-    if (e.target.closest("#log-float-minimize")) {
-      var logFloat = document.getElementById("log-float");
-      if (logFloat) logFloat.classList.toggle("minimized");
-    }
   });
 
   // Confirmation for destructive form submissions (data-confirm on the form).
@@ -205,13 +229,77 @@
     }
   });
 
-  // ---- Floating log panel ----
+  // ---- Operation log panel ----
+  // The panel stays closed until the user opens it from the topbar; a running
+  // or finished operation only lights up the indicator on that button.
+  var activeTrigger = null;
+
+  function logFloat() { return document.getElementById("log-float"); }
+
+  function setIndicator(state) {
+    var dot = document.getElementById("log-indicator");
+    if (!dot) return;
+    dot.classList.remove("running", "done", "failed");
+    if (!state) {
+      dot.hidden = true;
+      return;
+    }
+    dot.hidden = false;
+    dot.classList.add(state);
+  }
+
+  function setLogOpen(open) {
+    var panel = logFloat();
+    var toggle = document.getElementById("log-toggle");
+    if (!panel) return;
+    panel.classList.toggle("visible", open);
+    if (toggle) toggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      var body = document.getElementById("progress-panel");
+      if (body) body.scrollTop = body.scrollHeight;
+    }
+  }
+
+  function isLogOpen() {
+    var panel = logFloat();
+    return !!panel && panel.classList.contains("visible");
+  }
+
+  /** Only one operation runs at a time, so every other trigger is disabled. */
+  function setOperationRunning(running) {
+    document.body.classList.toggle("op-running", running);
+    document.querySelectorAll("button[hx-post]").forEach(function (button) {
+      if (button === activeTrigger) return;
+      button.disabled = running;
+    });
+
+    if (!activeTrigger) return;
+    if (running) {
+      if (!activeTrigger.dataset.originalLabel) {
+        activeTrigger.dataset.originalLabel = activeTrigger.innerHTML;
+      }
+      activeTrigger.innerHTML = "Cancel";
+      activeTrigger.classList.add("btn-danger");
+      activeTrigger.setAttribute("data-cancel", "true");
+      activeTrigger.disabled = false;
+    } else {
+      if (activeTrigger.dataset.originalLabel) {
+        activeTrigger.innerHTML = activeTrigger.dataset.originalLabel;
+        delete activeTrigger.dataset.originalLabel;
+      }
+      activeTrigger.classList.remove("btn-danger");
+      activeTrigger.removeAttribute("data-cancel");
+      activeTrigger.disabled = false;
+      activeTrigger = null;
+    }
+  }
+
   var progressPanel = document.getElementById("progress-panel");
-  var logFloat = document.getElementById("log-float");
-  if (progressPanel && logFloat) {
+  if (progressPanel) {
     new MutationObserver(function () {
-      if (progressPanel.children.length > 0 && !logFloat.classList.contains("visible")) {
-        logFloat.classList.add("visible");
+      if (progressPanel.children.length > 0) {
+        setOperationRunning(true);
+        if (!isLogOpen()) setIndicator("running");
       }
     }).observe(progressPanel, { childList: true });
   }
@@ -224,7 +312,7 @@
   });
 
   // When an operation finishes: start the prepared download (if the server
-  // asked for one), then refresh the books table in place.
+  // asked for one), release the buttons, then refresh the books table.
   document.body.addEventListener("htmx:sseClose", function () {
     var marker = document.getElementById("op-download");
     var url = marker && marker.getAttribute("data-download-url");
@@ -237,6 +325,10 @@
       a.click();
       a.remove();
     }
+
+    setOperationRunning(false);
+    var failed = !!document.querySelector("#progress-panel .log-done.error");
+    setIndicator(isLogOpen() ? null : failed ? "failed" : "done");
     document.body.dispatchEvent(new CustomEvent("refresh-books"));
   });
 
@@ -251,6 +343,11 @@
     if (input && savedSearch) {
       input.value = savedSearch;
       applyFilters();
+    }
+    if (document.body.classList.contains("op-running")) {
+      document.querySelectorAll("button[hx-post]").forEach(function (button) {
+        if (button !== activeTrigger) button.disabled = true;
+      });
     }
   });
 })();
