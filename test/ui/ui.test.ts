@@ -145,3 +145,48 @@ describe("user navigation", () => {
     assert.equal(await ui.page.locator(".topbar").count(), 1);
   });
 });
+
+describe("Audible sign-in from the settings page", () => {
+  let ui: UiContext;
+  const FAKE_HELPER = `python3 ${new URL("../resources/fake_helper.py", import.meta.url).pathname}`;
+
+  before(async () => {
+    process.env.AUDIBLE_HELPER = FAKE_HELPER;
+    ui = await startUi();
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+  });
+
+  after(async () => {
+    await ui?.close();
+    delete process.env.AUDIBLE_HELPER;
+  });
+
+  it("walks the two-step flow to a connected account", async () => {
+    await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+    await ui.page.selectOption("#marketplace", "de");
+    await ui.page.click('form[action="/user/audible/start"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+
+    // Step 2 shows a real link out to Amazon plus the paste field.
+    const signinHref = await ui.page.locator(".auth-card a[target=_blank]").getAttribute("href");
+    assert.match(signinHref || "", /amazon\.de\/ap\/signin/);
+
+    await ui.page.fill(
+      "#redirect-url",
+      "https://www.audible.de/?openid.oa2.authorization_code=ABC123",
+    );
+    await ui.page.click('form[action="/user/audible/complete"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+
+    const body = await ui.page.locator(".auth-wrap").innerText();
+    assert.match(body, /connected as Test User/i);
+    assert.match(body, /Connected/);
+    assert.deepEqual(
+      ui.consoleErrors.filter((e) => /Content Security Policy/i.test(e)),
+      [],
+    );
+  });
+});

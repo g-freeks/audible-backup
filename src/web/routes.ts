@@ -14,7 +14,13 @@ import {
 } from "../operations.ts";
 import { sseStream } from "./sse.ts";
 import { booksPage } from "./templates/books.ts";
-import { loginPage, settingsPage } from "./templates/user.ts";
+import { loginPage, settingsPage, type AudibleStatus } from "./templates/user.ts";
+import { runHelper, HelperUnavailableError } from "../pyhelper.ts";
+import {
+  setPendingLogin,
+  getPendingLogin,
+  clearPendingLogin,
+} from "./pending-logins.ts";
 import type { UserNav } from "./templates/layout.ts";
 import { zipStream, zipDirectoryEntries } from "./zip.ts";
 import { Readable } from "node:stream";
@@ -167,18 +173,114 @@ routes.post("/user/logout", (c) => {
   return c.redirect("/login");
 });
 
-routes.get("/user/settings", (c) => {
+/** Whether this user's config dir is linked to Audible, via the helper. */
+async function audibleStatus(): Promise<AudibleStatus> {
+  const pending = getPendingLogin(currentUserName());
+  try {
+    const done = await runHelper(["login-status"]);
+    return {
+      available: true,
+      linked: done.linked === true,
+      marketplace: (done.marketplace as string) || undefined,
+      pending: pending ? { url: pending.url, marketplace: pending.marketplace } : undefined,
+    };
+  } catch (err) {
+    if (err instanceof HelperUnavailableError) {
+      return { available: false, linked: false };
+    }
+    return {
+      available: true,
+      linked: false,
+      pending: pending ? { url: pending.url, marketplace: pending.marketplace } : undefined,
+    };
+  }
+}
+
+async function renderSettings(
+  c: Context,
+  extra: { message?: string; error?: string } = {},
+  status?: number,
+): Promise<Response> {
   const user = currentUser();
   if (!user) return c.redirect("/login");
-  return c.html(
-    settingsPage(
-      user.name,
-      user.activationBytes || "",
-      userHasPassword(user),
-      undefined,
-      buildUserNav(),
-    ),
-  );
+  const html = settingsPage({
+    userName: user.name,
+    activationBytes: user.activationBytes || "",
+    hasPassword: userHasPassword(user),
+    audible: await audibleStatus(),
+    userNav: buildUserNav(),
+    ...extra,
+  });
+  return status ? c.html(html, status as 400) : c.html(html);
+}
+
+routes.get("/user/settings", (c) => renderSettings(c));
+
+// --- Audible sign-in (two steps; the password is entered on Audible's site) ---
+
+routes.post("/user/audible/start", async (c) => {
+  const user = currentUser();
+  if (!user) return c.redirect("/login");
+
+  const body = await c.req.parseBody();
+  const marketplace = String(body.marketplace || "de");
+
+  try {
+    const done = await runHelper(["login-url", marketplace]);
+    if (!done.ok) {
+      return renderSettings(c, { error: done.message || "Could not start sign-in" }, 400);
+    }
+    setPendingLogin(user.name, {
+      marketplace: String(done.marketplace || marketplace),
+      serial: String(done.serial),
+      codeVerifier: String(done.code_verifier),
+      url: String(done.url),
+    });
+    return renderSettings(c);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return renderSettings(c, { error: `Could not start sign-in: ${msg}` }, 400);
+  }
+});
+
+routes.post("/user/audible/complete", async (c) => {
+  const user = currentUser();
+  if (!user) return c.redirect("/login");
+
+  const pending = getPendingLogin(user.name);
+  if (!pending) {
+    return renderSettings(c, { error: "Sign-in expired — please start again." }, 400);
+  }
+
+  const body = await c.req.parseBody();
+  const redirectUrl = String(body.redirect_url || "").trim();
+  if (!/^https?:\/\//i.test(redirectUrl)) {
+    return renderSettings(c, { error: "Paste the full address, including https://" }, 400);
+  }
+
+  try {
+    const done = await runHelper([
+      "login-complete",
+      pending.marketplace,
+      pending.serial,
+      pending.codeVerifier,
+      redirectUrl,
+    ]);
+    if (!done.ok) {
+      return renderSettings(c, { error: done.message || "Sign-in failed" }, 400);
+    }
+    clearPendingLogin(user.name);
+    const account = done.account ? ` as ${done.account}` : "";
+    return renderSettings(c, { message: `Audible account connected${account}.` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return renderSettings(c, { error: `Sign-in failed: ${msg}` }, 400);
+  }
+});
+
+routes.post("/user/audible/cancel", (c) => {
+  clearPendingLogin(currentUserName());
+  return renderSettings(c);
 });
 
 routes.post("/user/settings", async (c) => {
@@ -192,16 +294,7 @@ routes.post("/user/settings", async (c) => {
     removePassword: body.remove_password === "true",
   });
 
-  const updated = getUser(user.name)!;
-  return c.html(
-    settingsPage(
-      updated.name,
-      updated.activationBytes || "",
-      userHasPassword(updated),
-      "Settings saved",
-      buildUserNav(),
-    ),
-  );
+  return renderSettings(c, { message: "Settings saved" });
 });
 
 // --- Pages ---

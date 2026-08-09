@@ -738,3 +738,137 @@ describe("action buttons are not affected by inherited hx-select", () => {
     assert.match(html, /log-panel/);
   });
 });
+
+// --- Audible sign-in from the UI ---
+
+describe("Audible sign-in flow", () => {
+  const FAKE_HELPER = `python3 ${path.resolve(import.meta.dirname, "resources", "fake_helper.py")}`;
+
+  async function signedInUser(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  beforeEach(() => {
+    process.env.AUDIBLE_HELPER = FAKE_HELPER;
+  });
+
+  afterEach(() => {
+    delete process.env.AUDIBLE_HELPER;
+  });
+
+  it("offers a connect form when not linked", async () => {
+    const cookie = await signedInUser("alice");
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(html, /Connect Audible/);
+    assert.match(html, /\/user\/audible\/start/);
+    assert.match(html, /never sees your password/i);
+  });
+
+  it("step 1 returns the Amazon URL and the paste form", async () => {
+    const cookie = await signedInUser("alice");
+    const res = await app.request("/user/audible/start", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ marketplace: "de" }),
+    });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /amazon\.de\/ap\/signin/);
+    assert.match(html, /step 2 of 2/i);
+    assert.match(html, /name="redirect_url"/);
+  });
+
+  it("rejects a pasted value that is not a URL", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/user/audible/start", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({ marketplace: "de" }),
+    });
+    const res = await app.request("/user/audible/complete", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({ redirect_url: "not a url" }),
+    });
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /full address/i);
+  });
+
+  it("rejects a URL without an authorization code", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/user/audible/start", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({ marketplace: "de" }),
+    });
+    const res = await app.request("/user/audible/complete", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({ redirect_url: "https://www.audible.de/" }),
+    });
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /authorization code/i);
+  });
+
+  it("completes sign-in and reports the account as connected", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/user/audible/start", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({ marketplace: "de" }),
+    });
+    const res = await app.request("/user/audible/complete", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({
+        redirect_url: "https://www.audible.de/?openid.oa2.authorization_code=ABC123",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /connected as Test User/i);
+
+    // status is read back from the user's own config dir
+    const after = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(after, /Connected/);
+    assert.match(after, /Reconnect/);
+  });
+
+  it("keeps sign-in state separate per user", async () => {
+    const alice = await signedInUser("alice");
+    const bob = await signedInUser("bob");
+    await app.request("/user/audible/start", {
+      method: "POST", headers: { cookie: alice },
+      body: new URLSearchParams({ marketplace: "de" }),
+    });
+    await app.request("/user/audible/complete", {
+      method: "POST", headers: { cookie: alice },
+      body: new URLSearchParams({
+        redirect_url: "https://www.audible.de/?openid.oa2.authorization_code=ABC123",
+      }),
+    });
+
+    const bobHtml = await (await app.request("/user/settings", { headers: { cookie: bob } })).text();
+    assert.match(bobHtml, /Connect Audible/, "bob must still be unlinked");
+    assert.ok(!/badge-success">Connected/.test(bobHtml));
+  });
+
+  it("cancel clears a pending sign-in", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/user/audible/start", {
+      method: "POST", headers: { cookie },
+      body: new URLSearchParams({ marketplace: "de" }),
+    });
+    const res = await app.request("/user/audible/cancel", { method: "POST", headers: { cookie } });
+    const html = await res.text();
+    assert.ok(!/step 2 of 2/i.test(html), "pending step must be gone");
+    assert.match(html, /Connect Audible/);
+  });
+
+  it("explains the CLI fallback when the helper is unavailable", async () => {
+    process.env.FAKE_HELPER_MODE = "missing";
+    const cookie = await signedInUser("alice");
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(html, /audible quickstart/);
+    delete process.env.FAKE_HELPER_MODE;
+  });
+});

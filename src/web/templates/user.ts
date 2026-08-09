@@ -23,6 +23,11 @@ const formStyles = `
     .auth-card .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
     .auth-card .checkbox-row input { width: auto; }
     .auth-card .checkbox-row label { font-size: 0.85rem; color: var(--text); }
+    .auth-card select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+    .auth-card .steps { margin: 0 0 0.75rem 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+    .auth-card .steps li { list-style: decimal; }
+    .auth-card a { color: var(--accent); }
+    .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
   </style>
 `;
 
@@ -75,18 +80,105 @@ export function loginPage(users: UserListEntry[], error?: string, preselect?: st
   return layout("Sign in", content);
 }
 
-export function settingsPage(
-  userName: string,
-  activationBytes: string,
-  hasPassword: boolean,
-  message?: string,
-  userNav?: UserNav,
-): string {
+export interface AudibleStatus {
+  /** Whether the Python helper can run at all (sign-in needs it). */
+  available: boolean;
+  linked: boolean;
+  marketplace?: string;
+  /** Set while a sign-in is in progress and awaiting the pasted URL. */
+  pending?: { url: string; marketplace: string };
+}
+
+export interface SettingsView {
+  userName: string;
+  activationBytes: string;
+  hasPassword: boolean;
+  audible: AudibleStatus;
+  message?: string;
+  error?: string;
+  userNav?: UserNav;
+}
+
+const MARKETPLACES: [string, string][] = [
+  ["de", "Germany (audible.de)"],
+  ["us", "United States (audible.com)"],
+  ["uk", "United Kingdom (audible.co.uk)"],
+  ["fr", "France (audible.fr)"],
+  ["ca", "Canada (audible.ca)"],
+  ["it", "Italy (audible.it)"],
+  ["au", "Australia (audible.com.au)"],
+  ["in", "India (audible.in)"],
+  ["jp", "Japan (audible.co.jp)"],
+  ["es", "Spain (audible.es)"],
+  ["br", "Brazil (audible.com.br)"],
+];
+
+function audibleCard(audible: AudibleStatus): string {
+  if (!audible.available) {
+    return `<div class="auth-card">
+      <h2>Audible account</h2>
+      <p class="hint">Sign-in from the browser needs the Python <code>audible</code>
+      package, which is not available here. Use the command line instead:
+      <code>audible quickstart</code>.</p>
+    </div>`;
+  }
+
+  if (audible.pending) {
+    return `<div class="auth-card">
+      <h2>Connect Audible — step 2 of 2</h2>
+      <ol class="hint steps">
+        <li><a href="${escapeHtml(audible.pending.url)}" target="_blank" rel="noopener noreferrer">Open the Audible sign-in page</a> and log in there.</li>
+        <li>After signing in your browser lands on a page that fails to load. That is expected.</li>
+        <li>Copy that page's full address and paste it below.</li>
+      </ol>
+      <form method="post" action="/user/audible/complete">
+        <label for="redirect-url">Address of the page you landed on</label>
+        <input id="redirect-url" name="redirect_url" placeholder="https://www.audible.de/?openid.oa2.authorization_code=..." required autocomplete="off">
+        <button class="btn btn-primary" type="submit">Finish sign-in</button>
+      </form>
+      <form method="post" action="/user/audible/cancel">
+        <button class="btn btn-ghost" type="submit">Cancel</button>
+      </form>
+    </div>`;
+  }
+
+  if (audible.linked) {
+    return `<div class="auth-card">
+      <h2>Audible account</h2>
+      <p><span class="badge badge-success">Connected</span>
+        ${audible.marketplace ? `<span class="hint"> marketplace: ${escapeHtml(audible.marketplace)}</span>` : ""}
+      </p>
+      <form method="post" action="/user/audible/start">
+        <input type="hidden" name="marketplace" value="${escapeHtml(audible.marketplace || "de")}">
+        <button class="btn btn-ghost" type="submit">Reconnect</button>
+      </form>
+    </div>`;
+  }
+
+  return `<div class="auth-card">
+    <h2>Connect Audible</h2>
+    <p class="hint">You sign in on Audible's own page — this app never sees your password.</p>
+    <form method="post" action="/user/audible/start">
+      <label for="marketplace">Marketplace</label>
+      <select id="marketplace" name="marketplace">
+        ${MARKETPLACES.map(([code, label]) =>
+          `<option value="${code}"${code === "de" ? " selected" : ""}>${escapeHtml(label)}</option>`,
+        ).join("")}
+      </select>
+      <button class="btn btn-primary" type="submit">Start sign-in</button>
+    </form>
+  </div>`;
+}
+
+export function settingsPage(view: SettingsView): string {
+  const { userName, activationBytes, hasPassword, message, error, userNav } = view;
   const content = `
     ${formStyles}
     <div class="auth-wrap">
       <h1>Settings — ${escapeHtml(userName)}</h1>
       ${message ? `<div class="auth-error" style="color:var(--success)">${escapeHtml(message)}</div>` : ""}
+      ${error ? `<div class="auth-error">${escapeHtml(error)}</div>` : ""}
+      ${audibleCard(view.audible)}
       <div class="auth-card">
         <form method="post" action="/user/settings">
           <label for="set-bytes">Audible activation bytes</label>
