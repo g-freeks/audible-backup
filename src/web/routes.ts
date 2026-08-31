@@ -328,22 +328,28 @@ routes.post("/user/audible/complete", async (c) => {
  * Inside Flatpak `xdg-open` is the portal shim, so this asks the host to open
  * the folder rather than reaching out of the sandbox itself.
  */
-routes.post("/open-output", (c) => {
+routes.post("/open-output", async (c) => {
   if (!isDesktopMode()) return c.notFound();
 
   const dir = requestPaths().outputDir;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const child = spawn("xdg-open", [dir], {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.on("error", () => {});
-    child.unref();
   } catch {
-    return c.text("Could not open the folder", 500);
+    return c.text("Could not create the output folder", 500);
   }
-  return c.body(null, 204);
+
+  // Waiting for the spawn to succeed costs a moment but is the difference
+  // between "opened" and "silently did nothing" when xdg-open is missing.
+  const opened = await new Promise<boolean>((resolve) => {
+    const child = spawn("xdg-open", [dir], { detached: true, stdio: "ignore" });
+    child.once("error", () => resolve(false));
+    child.once("spawn", () => {
+      child.unref();
+      resolve(true);
+    });
+  });
+
+  return opened ? c.body(null, 204) : c.text("Could not open the folder", 500);
 });
 
 routes.post("/user/reset-db", (c) => {

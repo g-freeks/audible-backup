@@ -175,11 +175,34 @@ describe("finished audiobooks on the desktop", () => {
     ensureDesktopUser();
     fs.rmSync(desktopPaths.outputDir, { recursive: true, force: true });
 
-    const res = await app.request("/open-output", { method: "POST", ...withToken });
+    // Inside Flatpak xdg-open is the portal shim; CI has none at all, so a
+    // stub stands in for it and PATH decides which branch runs.
+    const binDir = path.join(tmpDir, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, "xdg-open"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
-    // xdg-open is absent in CI; spawning it must still not fail the request,
-    // because the folder being there is the part the user depends on.
-    assert.equal(res.status, 204);
-    assert.ok(fs.existsSync(desktopPaths.outputDir), "output folder exists");
+    const realPath = process.env.PATH;
+    process.env.PATH = binDir;
+    try {
+      const res = await app.request("/open-output", { method: "POST", ...withToken });
+      assert.equal(res.status, 204, "reports success when the desktop can open it");
+      assert.ok(fs.existsSync(desktopPaths.outputDir), "output folder exists");
+    } finally {
+      process.env.PATH = realPath;
+    }
+  });
+
+  it("says so when there is nothing to open the folder with", async () => {
+    ensureDesktopUser();
+    const realPath = process.env.PATH;
+    process.env.PATH = path.join(tmpDir, "empty");
+    try {
+      const res = await app.request("/open-output", { method: "POST", ...withToken });
+      // Reporting 204 here is what made the button look broken rather than
+      // unavailable: nothing opens, and nothing says why.
+      assert.equal(res.status, 500);
+    } finally {
+      process.env.PATH = realPath;
+    }
   });
 });

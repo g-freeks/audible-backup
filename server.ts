@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
@@ -15,7 +16,12 @@ if (authUser && authPassword) {
   app.use("*", basicAuth({ username: authUser, password: authPassword }));
 }
 
-app.use("/static/*", serveStatic({ root: "src/web/" }));
+// serveStatic resolves `root` against the process's working directory, not
+// against this file. A desktop launcher starts the server from wherever it
+// happens to be, so an absolute root is the only one that survives: without
+// it every script 404s, htmx never loads, and each hx-* button silently does
+// nothing while plain HTML forms keep working.
+app.use("/static/*", serveStatic({ root: path.join(import.meta.dirname, "src", "web") }));
 app.route("/", routes);
 
 // A desktop install serves only to its own machine; a server install keeps
