@@ -6,7 +6,7 @@ services:
   audible-backup:
     # Pulls the published image; run `docker compose build` to build locally
     # from source instead.
-    image: ghcr.io/g-freeks/audible_backup:latest
+    image: ghcr.io/g-freeks/audible-backup:latest
     build: .
     ports:
       - "3000:3000"
