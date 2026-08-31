@@ -268,10 +268,20 @@ GNOME runtime is a dependency that Flatpak shares between apps, not something
 copied into the bundle. Only Node, the vendored Python packages and the app
 itself are actually shipped.
 
-Still unverified after this phase: the shell's *window*. Opening a real
-WebKitGTK window needs a display, and a headless X server on a CI runner tests
-the runner more than the app. The first genuine launch is a human running
-`flatpak run io.github.g_freeks.audible_backup`.
+The shell's *window* cannot be tested here — opening a real WebKitGTK window
+needs a display, and a headless X server on a CI runner tests the runner more
+than the app. It has since been confirmed by hand: the window opens, Audible
+sign-in completes through the system browser, and the library and conversion
+controls work.
+
+That first real launch found the one bug none of this could: `serveStatic`
+resolves its root against the process's working directory, so a desktop
+launch — which starts the server from wherever the session began — served
+every client script as a 404. The page still rendered and plain HTML forms
+still worked, so signing in succeeded while every htmx-driven button silently
+did nothing. The root is now resolved against `server.ts`,
+`test/server-static.test.ts` covers it with a real process, and the smoke test
+fetches the scripts rather than trusting that the page returned 200.
 
 **Phase 5 — Flathub submission**
 - PR to `flathub/flathub` with the manifest
