@@ -154,13 +154,11 @@ environment variables still win in every mode.
 
 ## Risks and open questions
 
-1. **App ID vs. repository name.** Flathub maps `-` in the ID to `_`, and expects
-   the ID to reflect the repository URL — `io.github.g_freeks.audible_backup`
-   implies `github.com/g-freeks/audible-backup`, but this repo is
-   `audible_backup`. Either rename the repository to `audible-backup` (GitHub
-   redirects the old URL) or confirm the linter tolerates the underscore.
-   **Decide before writing the manifest**, because the ID is baked into file
-   names throughout.
+1. ~~**App ID vs. repository name.**~~ *Resolved.* Flathub maps `-` in the ID to
+   `_`, and expects the ID to reflect the repository URL. The repository was
+   renamed to `audible-backup`, so `io.github.g_freeks.audible_backup` now maps
+   back correctly; GitHub redirects the old `audible_backup` URL. The app ID is
+   settled and can be baked into file names from Phase 2 onwards.
 2. **Flathub review of a DRM-adjacent app.** The app decrypts purchased
    audiobooks. Framing it around personal backups of your own purchases (as the
    README already does) helps, but there is a real chance of rejection. The

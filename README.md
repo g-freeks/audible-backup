@@ -20,7 +20,7 @@ CI publishes a multi-arch image (amd64/arm64) to GitHub Container Registry on
 every push to `main`:
 
 ```bash
-docker compose up -d          # pulls ghcr.io/g-freeks/audible_backup:latest
+docker compose up -d          # pulls ghcr.io/g-freeks/audible-backup:latest
 # or build from source instead:
 docker compose build && docker compose up -d
 ```

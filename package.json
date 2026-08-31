@@ -1,5 +1,5 @@
 {
-  "name": "audible_backup",
+  "name": "audible-backup",
   "version": "1.0.0",
   "description": "Sync an Audible library, download AAX files, and convert them to chapter-split MP3s",
   "main": "app.ts",
