@@ -1,0 +1,24 @@
+{
+  "name": "node-modules",
+  "buildsystem": "simple",
+  "build-commands": [
+    "mkdir -p /app/share/audible-backup",
+    "cp -r node_modules /app/share/audible-backup/node_modules"
+  ],
+  "sources": [
+    {
+      "type": "archive",
+      "url": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.9.tgz",
+      "sha512": "bc72fac3779c66c932fbc3f9303f9e15f6864f209e387508158306a5019bac14d298d368c6fd227faf6b119e608aedfac1e0b9b1a16ece72f8d758115fb6c90f",
+      "dest": "node_modules/@hono/node-server",
+      "strip-components": 1
+    },
+    {
+      "type": "archive",
+      "url": "https://registry.npmjs.org/hono/-/hono-4.11.9.tgz",
+      "sha512": "11ac3661318ce963b103a0976dc91a12fb25af635ee0d16c2abbdcd2ff7b243e5ac1b99e04b3b9c3d1e8f4bf6498aa27af017d449956e81c53d4f56ffda8011d",
+      "dest": "node_modules/hono",
+      "strip-components": 1
+    }
+  ]
+}

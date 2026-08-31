@@ -1,6 +1,6 @@
 # Plan: distributing Audible Backup as a Flatpak
 
-Status: Phases 1 and 2 are implemented. Phases 3–6 are still a proposal.
+Status: Phases 1–3 are implemented. Phases 4–6 are still a proposal.
 
 ## Goal
 
@@ -99,9 +99,9 @@ existing basic-auth option is aimed at a different threat model.
 | Concern | Today | Flatpak build |
 | --- | --- | --- |
 | Runtime | `node:24-bookworm-slim` image | `org.gnome.Platform` 50 + `org.freedesktop.Sdk.Extension.node24` at build time, Node binary copied into `/app` |
-| ffmpeg | apt package | `org.freedesktop.Platform.ffmpeg-full` extension — **must verify it ships the `ffmpeg` binary and libmp3lame**, else build a minimal ffmpeg from source |
-| npm deps | `npm ci` at build | Vendored offline via `flatpak-node-generator` (only `hono`, `@hono/node-server`; `playwright-core` is a devDependency and excluded) |
-| Python deps | `pip install audible-cli` | Vendored offline via `flatpak-pip-generator` |
+| ffmpeg | apt package | Already in `org.gnome.Platform` — no extension, see Phase 3 |
+| npm deps | `npm ci` at build | Vendored from `package-lock.json` by `scripts/generate-flatpak-sources.py` (only `hono`, `@hono/node-server`, which have no transitive dependencies) |
+| Python deps | `pip install audible-cli` | 15 packages vendored from PyPI with checksums by the same script |
 | Entry point | `node server.ts` | GJS shell → spawns `node server.ts` → WebKitGTK window |
 | Config | env vars, `.env` | XDG dirs, `FLATPAK_ID` detection; `.env` unused |
 | Users | multi-tenant | single-user (legacy mode), user UI hidden |
@@ -166,15 +166,64 @@ This phase cannot be fully verified here: there is no `gjs` or WebKitGTK in the
 dev container, so the shell is unrun. Its first real execution will be the
 Phase 4 smoke test.
 
-**Phase 3 — the manifest**
-- `io.github.g_freeks.audible_backup.yml`, on `org.gnome.Platform` 50
-- Generated offline source manifests for npm and pip
-- ffmpeg resolution (extension vs. source build)
-- Permissions: `--share=network`, `--socket=wayland`, `--socket=fallback-x11`,
-  `--device=dri`, `--filesystem=xdg-music:create`
-- Install layout the shell already assumes: `/app/bin/node`,
-  `/app/share/audible-backup/server.ts`, and the shell itself as
-  `/app/bin/audible-backup`
+**Phase 3 — the manifest** ✅ *done*
+- `flatpak/io.github.g_freeks.audible_backup.yml`, on `org.gnome.Platform` 50
+- `scripts/generate-flatpak-sources.py` writes both offline module files;
+  they are generated and committed, never hand-edited
+- Permissions: `--share=network`, `--share=ipc`, `--socket=wayland`,
+  `--socket=fallback-x11`, `--device=dri`, `--filesystem=xdg-music:create`
+- Install layout the shell already assumed: `/app/bin/node`,
+  `/app/share/audible-backup/server.ts`, `/app/bin/audible-backup`
+
+*ffmpeg needs no extension.* The open question was whether
+`org.freedesktop.Platform.ffmpeg-full` ships the CLI and libmp3lame. It turns
+out not to matter: freedesktop-sdk's `elements/platform.bst` — which the GNOME
+runtime is built on — already includes `components/ffmpeg.bst` and
+`components/lame.bst`, that build passes `--enable-libmp3lame` with no
+`--disable-programs`, and its codec allowlist contains both the `aac` decoder
+and the `libmp3lame` encoder. That is exactly what AAX/AAXC to MP3 needs, so
+the base runtime's `/usr/bin/ffmpeg` is enough and no extension is declared.
+The same stack ships `python3` and `flatpak-xdg-utils`, which is what makes the
+`xdg-open` in "Open folder" work.
+
+*npm vendoring needs no generator tool.* There are exactly two production
+packages and they have no transitive dependencies, so the sources are derived
+straight from `package-lock.json` — including converting npm's base64
+`integrity` to the hex checksum flatpak wants. This cannot disagree with what
+`npm ci` installs, and `test/flatpak.test.ts` fails if the two drift.
+
+*Python is 15 packages, and only one is awkward.* Thirteen are pure-Python
+wheels that work on any interpreter and architecture. `pbkdf2` and `pyaes`
+ship only an sdist, and `pyaes` still says `from distutils.core import setup` —
+distutils was removed in Python 3.12, so that build only works through
+setuptools' compatibility shim. Rather than depend on whichever setuptools the
+SDK carries, a pinned setuptools/wheel/packaging trio is vendored, installed
+into a `_buildtools` directory under the build tree, and put on `PYTHONPATH`
+for the real install. It never reaches `/app`.
+
+*Pillow is the fragile pin.* It is the only compiled dependency and ships no
+`abi3` wheels, so it is pinned per architecture **and** per CPython version
+(`cp313`, matching freedesktop-sdk 25.08). A runtime that moved to another
+Python would fail this build loudly — pip would find no matching wheel — rather
+than silently, which is the acceptable version of this problem.
+
+Everything is installed with `pip --target=/app/lib/audible-python` and reached
+through `--env=PYTHONPATH=...`, so no path anywhere encodes a Python version.
+
+What was actually verified here, without flatpak-builder:
+- Every one of the 18 pinned URLs was downloaded and its checksum recompared
+- The generated build commands were run offline against the staged sources and
+  produced a working install — including compiling both sdists, on a machine
+  whose *system* setuptools cannot build them, which is the case the vendored
+  build tools exist for
+- The resulting tree was assembled into the layout the manifest produces, and
+  the server booted from it and served its pages, with the Python helper
+  reporting itself available
+
+`audible` falls back to its pure-Python crypto (`pyaes`, `rsa`, `pbkdf2`) and
+says so in a warning. Its faster backends are optional extras that would add a
+compiled dependency; the data being decrypted is a small voucher, so the slow
+path is not worth another arch-specific wheel.
 
 **Phase 4 — build and verify**
 - `flatpak-builder` job in CI via `flatpak/flatpak-github-actions`
@@ -200,15 +249,23 @@ Phase 4 smoke test.
    README already does) helps, but there is a real chance of rejection. The
    fallback — GitHub Releases bundles, or a self-hosted Flatpak repo — should be
    treated as an acceptable outcome, not a failure.
-3. **ffmpeg availability** is a hard blocker if `ffmpeg-full` lacks the CLI or
-   libmp3lame. Verify in Phase 3 before building anything else on it.
+3. ~~**ffmpeg availability.**~~ *Resolved in Phase 3.* The base runtime already
+   carries an `ffmpeg` built with `--enable-libmp3lame`, an `aac` decoder and no
+   `--disable-programs`, so no extension is needed at all.
 4. **Runtime and SDK-extension versions.** The plan originally named
    `org.freedesktop.Platform`, which ships neither WebKitGTK nor GJS; the shell
    needs `org.gnome.Platform`, which has both. GNOME 48 went end-of-life in
-   March 2026, so the manifest targets 50. The matching
-   `org.freedesktop.Sdk.Extension.node24` branch has to line up with the
-   freedesktop base that GNOME 50 is built on — confirm the exact branch when
-   writing the manifest rather than assuming `24.08`.
+   March 2026, so the manifest targets 50. Two details behind that are still
+   assumptions rather than facts, because `gitlab.gnome.org` and `flathub.org`
+   are both unreachable from the environment this was written in:
+   - that GNOME 50 is built on freedesktop-sdk 25.08, and therefore ships
+     **Python 3.13** — which is the tag the Pillow wheels are pinned to;
+   - that `org.freedesktop.Sdk.Extension.node24` exists on that branch.
+
+   Both fail loudly at build time if wrong (no matching wheel; no such
+   extension), so Phase 4 is where they get settled. If the Python version is
+   the thing that is wrong, re-run the generator with
+   `--python-version` and commit the result.
 5. **Bundle size.** Node plus Python plus ffmpeg is likely 200–300 MB. Acceptable
    but worth measuring.
 6. **Browser tests don't run inside the sandbox.** The existing suites keep
@@ -220,7 +277,7 @@ Phase 4 smoke test.
 | --- | --- |
 | 1 — desktop-shaped app | ✅ done |
 | 2 — desktop integration + shell | ✅ done |
-| 3 — manifest and offline sources | 2–3 days (most of the pain: pip/npm vendoring, ffmpeg) |
+| 3 — manifest and offline sources | ✅ done |
 | 4 — CI and verification | 1 day |
 | 5 — Flathub submission | unpredictable; days to weeks of review latency |
 | 6 — drop Python (optional) | 3–5 days |
