@@ -184,3 +184,46 @@ describe("generated python sources", () => {
     assert.match(bootstrap, /--target="\$\{PWD\}\/_buildtools"/, "keep it out of /app");
   });
 });
+
+describe("flatpak CI job", () => {
+  const workflow = fs.readFileSync(
+    path.join(ROOT, ".github/workflows/flatpak.yml"),
+    "utf8",
+  );
+
+  it("builds the manifest that exists and runs the smoke test", () => {
+    assert.match(workflow, /flatpak\/io\.github\.g_freeks\.audible_backup\.yml/);
+    assert.match(workflow, /flatpak\/smoke-test\.sh/);
+  });
+
+  it("keeps the smoke test executable", () => {
+    const script = path.join(FLATPAK, "smoke-test.sh");
+    assert.ok(fs.statSync(script).mode & 0o111, "smoke-test.sh must be executable");
+    assert.match(fs.readFileSync(script, "utf8"), /^#!\/usr\/bin\/env bash\n/);
+  });
+
+  it("rebuilds when anything that lands in the bundle changes", () => {
+    // The manifest copies these into /app; if one stopped triggering the job,
+    // a broken bundle could reach a release unnoticed. Each has to appear in
+    // both the push and the pull_request filter — being listed under only one
+    // of them is the easy mistake, and looks fine at a glance.
+    for (const pathFilter of ["flatpak/**", "desktop/**", "src/**", "helper/**",
+                              "server.ts", "package-lock.json"]) {
+      const occurrences = workflow.split(`'${pathFilter}'`).length - 1;
+      assert.ok(
+        occurrences >= 2,
+        `${pathFilter} appears in ${occurrences} trigger(s), expected push and pull_request`,
+      );
+    }
+  });
+
+  it("does not use YAML anchors, which GitHub Actions cannot parse", () => {
+    assert.ok(!/^\s*\w+:\s*&\w+/m.test(workflow), "anchor definition found");
+    assert.ok(!/:\s*\*\w+\s*$/m.test(workflow), "anchor reference found");
+  });
+
+  it("smoke-tests the same app ID the manifest builds", () => {
+    const script = fs.readFileSync(path.join(FLATPAK, "smoke-test.sh"), "utf8");
+    assert.match(script, new RegExp(`APP=${APP_ID.replace(/\./g, "\\.")}$`, "m"));
+  });
+});

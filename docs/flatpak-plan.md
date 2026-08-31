@@ -1,6 +1,6 @@
 # Plan: distributing Audible Backup as a Flatpak
 
-Status: Phases 1–3 are implemented. Phases 4–6 are still a proposal.
+Status: Phases 1–4 are implemented. Phases 5–6 are still a proposal.
 
 ## Goal
 
@@ -225,10 +225,53 @@ says so in a warning. Its faster backends are optional extras that would add a
 compiled dependency; the data being decrypted is a small voucher, so the slow
 path is not worth another arch-specific wheel.
 
-**Phase 4 — build and verify**
-- `flatpak-builder` job in CI via `flatpak/flatpak-github-actions`
-- Smoke test: build, install, launch headless, assert the server answers
-- Publish `.flatpak` bundles on GitHub Releases (x86_64; aarch64 is slow under QEMU emulation and may be a follow-up)
+**Phase 4 — build and verify** ✅ *done*
+- `.github/workflows/flatpak.yml` builds the manifest with `flatpak-builder`
+- `flatpak/smoke-test.sh` checks the sandbox, not the app
+- The bundle is uploaded as a CI artifact, and attached to the GitHub release
+  on version tags (x86_64 only; aarch64 needs QEMU emulation and takes hours)
+
+The job installs `flatpak-builder` from apt rather than using a prebuilt
+action image, because that would mean guessing at an image tag for GNOME 50.
+`--install-deps-from=flathub` then resolves the runtime, the SDK and the node
+extension at whatever branches the manifest actually needs, which is also what
+settles the two questions Phase 3 left open — if GNOME 50 or the node24
+extension does not exist, this step fails and says so.
+
+The smoke test is deliberately not a second copy of the test suite. Everything
+in it is a property of the *sandbox* that no unit or browser test can see:
+
+| Check | The assumption it settles |
+| --- | --- |
+| `ffmpeg` runs, has `libmp3lame` and an `aac` decoder | that the runtime's ffmpeg can do this job without an extension |
+| the vendored Python stack imports | that the Pillow wheel's `cp313` tag matches the runtime's interpreter |
+| the helper answers on its protocol | that `PYTHONPATH` and the helper's install path are right |
+| `gjs` resolves GTK 4.0 and WebKit 6.0 | that the shell's toolkit exists — checked without a display |
+| the app serves, and refuses requests without a token | that the install layout works and the loopback gate survived packaging |
+
+The store metadata is validated in the same job with `appstreamcli validate`
+and `desktop-file-validate` — the checks Flathub itself runs. Both already
+pass.
+
+The first run of this job (PR #22) settled everything Phase 3 had to assume:
+
+| Assumption | What the sandbox reported |
+| --- | --- |
+| `org.gnome.Platform//50` and the `node24` SDK extension exist | the build resolved and installed both |
+| the runtime ships Python 3.13, matching the Pillow pin | `python 3.13.15, audible 0.12.0, pillow 12.3.0` |
+| the runtime's ffmpeg suffices, with no extension | `libmp3lame` encoder and `aac` decoder both present |
+| gjs can load the shell's toolkit | `GTK 4.22, WebKit 2.52` — that is WebKitGTK's own version; the API is 6.0 |
+| the install layout works | the app served HTTP 200 with its token, 403 without |
+
+The bundle is **22 MB**, not the 200–300 MB estimated in the risks below: the
+GNOME runtime is a dependency that Flatpak shares between apps, not something
+copied into the bundle. Only Node, the vendored Python packages and the app
+itself are actually shipped.
+
+Still unverified after this phase: the shell's *window*. Opening a real
+WebKitGTK window needs a display, and a headless X server on a CI runner tests
+the runner more than the app. The first genuine launch is a human running
+`flatpak run io.github.g_freeks.audible_backup`.
 
 **Phase 5 — Flathub submission**
 - PR to `flathub/flathub` with the manifest
@@ -252,22 +295,17 @@ path is not worth another arch-specific wheel.
 3. ~~**ffmpeg availability.**~~ *Resolved in Phase 3.* The base runtime already
    carries an `ffmpeg` built with `--enable-libmp3lame`, an `aac` decoder and no
    `--disable-programs`, so no extension is needed at all.
-4. **Runtime and SDK-extension versions.** The plan originally named
-   `org.freedesktop.Platform`, which ships neither WebKitGTK nor GJS; the shell
-   needs `org.gnome.Platform`, which has both. GNOME 48 went end-of-life in
-   March 2026, so the manifest targets 50. Two details behind that are still
-   assumptions rather than facts, because `gitlab.gnome.org` and `flathub.org`
-   are both unreachable from the environment this was written in:
-   - that GNOME 50 is built on freedesktop-sdk 25.08, and therefore ships
-     **Python 3.13** — which is the tag the Pillow wheels are pinned to;
-   - that `org.freedesktop.Sdk.Extension.node24` exists on that branch.
-
-   Both fail loudly at build time if wrong (no matching wheel; no such
-   extension), so Phase 4 is where they get settled. If the Python version is
-   the thing that is wrong, re-run the generator with
-   `--python-version` and commit the result.
-5. **Bundle size.** Node plus Python plus ffmpeg is likely 200–300 MB. Acceptable
-   but worth measuring.
+4. ~~**Runtime and SDK-extension versions.**~~ *Resolved in Phase 4.* The
+   original plan named `org.freedesktop.Platform`, which ships neither
+   WebKitGTK nor GJS; the shell needs `org.gnome.Platform`, which has both.
+   The first CI build confirmed that GNOME 50 and
+   `org.freedesktop.Sdk.Extension.node24` both resolve, and that the runtime
+   ships Python 3.13 — matching the `cp313` Pillow pin. If a future runtime
+   moves to another Python, the build fails on the missing wheel; re-run the
+   generator with `--python-version` and commit the result.
+5. ~~**Bundle size.**~~ *Measured in Phase 4: 22 MB.* The estimate assumed the
+   runtime counted; it does not — Flatpak shares it between apps, and ffmpeg
+   and Python come from it rather than from the bundle.
 6. **Browser tests don't run inside the sandbox.** The existing suites keep
    running against the plain server in CI; the Flatpak job only smoke-tests.
 
@@ -278,7 +316,7 @@ path is not worth another arch-specific wheel.
 | 1 — desktop-shaped app | ✅ done |
 | 2 — desktop integration + shell | ✅ done |
 | 3 — manifest and offline sources | ✅ done |
-| 4 — CI and verification | 1 day |
+| 4 — CI and verification | ✅ done |
 | 5 — Flathub submission | unpredictable; days to weeks of review latency |
 | 6 — drop Python (optional) | 3–5 days |
 
