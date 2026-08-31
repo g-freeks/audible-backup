@@ -1,6 +1,6 @@
 # Plan: distributing Audible Backup as a Flatpak
 
-Status: Phases 1–3 are implemented. Phases 4–6 are still a proposal.
+Status: Phases 1–4 are implemented. Phases 5–6 are still a proposal.
 
 ## Goal
 
@@ -225,10 +225,38 @@ says so in a warning. Its faster backends are optional extras that would add a
 compiled dependency; the data being decrypted is a small voucher, so the slow
 path is not worth another arch-specific wheel.
 
-**Phase 4 — build and verify**
-- `flatpak-builder` job in CI via `flatpak/flatpak-github-actions`
-- Smoke test: build, install, launch headless, assert the server answers
-- Publish `.flatpak` bundles on GitHub Releases (x86_64; aarch64 is slow under QEMU emulation and may be a follow-up)
+**Phase 4 — build and verify** ✅ *done*
+- `.github/workflows/flatpak.yml` builds the manifest with `flatpak-builder`
+- `flatpak/smoke-test.sh` checks the sandbox, not the app
+- The bundle is uploaded as a CI artifact, and attached to the GitHub release
+  on version tags (x86_64 only; aarch64 needs QEMU emulation and takes hours)
+
+The job installs `flatpak-builder` from apt rather than using a prebuilt
+action image, because that would mean guessing at an image tag for GNOME 50.
+`--install-deps-from=flathub` then resolves the runtime, the SDK and the node
+extension at whatever branches the manifest actually needs, which is also what
+settles the two questions Phase 3 left open — if GNOME 50 or the node24
+extension does not exist, this step fails and says so.
+
+The smoke test is deliberately not a second copy of the test suite. Everything
+in it is a property of the *sandbox* that no unit or browser test can see:
+
+| Check | The assumption it settles |
+| --- | --- |
+| `ffmpeg` runs, has `libmp3lame` and an `aac` decoder | that the runtime's ffmpeg can do this job without an extension |
+| the vendored Python stack imports | that the Pillow wheel's `cp313` tag matches the runtime's interpreter |
+| the helper answers on its protocol | that `PYTHONPATH` and the helper's install path are right |
+| `gjs` resolves GTK 4.0 and WebKit 6.0 | that the shell's toolkit exists — checked without a display |
+| the app serves, and refuses requests without a token | that the install layout works and the loopback gate survived packaging |
+
+The store metadata is validated in the same job with `appstreamcli validate`
+and `desktop-file-validate` — the checks Flathub itself runs. Both already
+pass.
+
+Still unverified after this phase: the shell's *window*. Opening a real
+WebKitGTK window needs a display, and a headless X server on a CI runner tests
+the runner more than the app. The first genuine launch is a human running
+`flatpak run io.github.g_freeks.audible_backup`.
 
 **Phase 5 — Flathub submission**
 - PR to `flathub/flathub` with the manifest
@@ -278,7 +306,7 @@ path is not worth another arch-specific wheel.
 | 1 — desktop-shaped app | ✅ done |
 | 2 — desktop integration + shell | ✅ done |
 | 3 — manifest and offline sources | ✅ done |
-| 4 — CI and verification | 1 day |
+| 4 — CI and verification | ✅ done |
 | 5 — Flathub submission | unpredictable; days to weeks of review latency |
 | 6 — drop Python (optional) | 3–5 days |
 
