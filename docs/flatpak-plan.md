@@ -253,6 +253,21 @@ The store metadata is validated in the same job with `appstreamcli validate`
 and `desktop-file-validate` — the checks Flathub itself runs. Both already
 pass.
 
+The first run of this job (PR #22) settled everything Phase 3 had to assume:
+
+| Assumption | What the sandbox reported |
+| --- | --- |
+| `org.gnome.Platform//50` and the `node24` SDK extension exist | the build resolved and installed both |
+| the runtime ships Python 3.13, matching the Pillow pin | `python 3.13.15, audible 0.12.0, pillow 12.3.0` |
+| the runtime's ffmpeg suffices, with no extension | `libmp3lame` encoder and `aac` decoder both present |
+| gjs can load the shell's toolkit | `GTK 4.22, WebKit 2.52` — that is WebKitGTK's own version; the API is 6.0 |
+| the install layout works | the app served HTTP 200 with its token, 403 without |
+
+The bundle is **22 MB**, not the 200–300 MB estimated in the risks below: the
+GNOME runtime is a dependency that Flatpak shares between apps, not something
+copied into the bundle. Only Node, the vendored Python packages and the app
+itself are actually shipped.
+
 Still unverified after this phase: the shell's *window*. Opening a real
 WebKitGTK window needs a display, and a headless X server on a CI runner tests
 the runner more than the app. The first genuine launch is a human running
@@ -280,22 +295,17 @@ the runner more than the app. The first genuine launch is a human running
 3. ~~**ffmpeg availability.**~~ *Resolved in Phase 3.* The base runtime already
    carries an `ffmpeg` built with `--enable-libmp3lame`, an `aac` decoder and no
    `--disable-programs`, so no extension is needed at all.
-4. **Runtime and SDK-extension versions.** The plan originally named
-   `org.freedesktop.Platform`, which ships neither WebKitGTK nor GJS; the shell
-   needs `org.gnome.Platform`, which has both. GNOME 48 went end-of-life in
-   March 2026, so the manifest targets 50. Two details behind that are still
-   assumptions rather than facts, because `gitlab.gnome.org` and `flathub.org`
-   are both unreachable from the environment this was written in:
-   - that GNOME 50 is built on freedesktop-sdk 25.08, and therefore ships
-     **Python 3.13** — which is the tag the Pillow wheels are pinned to;
-   - that `org.freedesktop.Sdk.Extension.node24` exists on that branch.
-
-   Both fail loudly at build time if wrong (no matching wheel; no such
-   extension), so Phase 4 is where they get settled. If the Python version is
-   the thing that is wrong, re-run the generator with
-   `--python-version` and commit the result.
-5. **Bundle size.** Node plus Python plus ffmpeg is likely 200–300 MB. Acceptable
-   but worth measuring.
+4. ~~**Runtime and SDK-extension versions.**~~ *Resolved in Phase 4.* The
+   original plan named `org.freedesktop.Platform`, which ships neither
+   WebKitGTK nor GJS; the shell needs `org.gnome.Platform`, which has both.
+   The first CI build confirmed that GNOME 50 and
+   `org.freedesktop.Sdk.Extension.node24` both resolve, and that the runtime
+   ships Python 3.13 — matching the `cp313` Pillow pin. If a future runtime
+   moves to another Python, the build fails on the missing wheel; re-run the
+   generator with `--python-version` and commit the result.
+5. ~~**Bundle size.**~~ *Measured in Phase 4: 22 MB.* The estimate assumed the
+   runtime counted; it does not — Flatpak shares it between apps, and ffmpeg
+   and Python come from it rather than from the bundle.
 6. **Browser tests don't run inside the sandbox.** The existing suites keep
    running against the plain server in CI; the Flatpak job only smoke-tests.
 
