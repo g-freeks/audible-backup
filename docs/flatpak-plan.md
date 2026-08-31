@@ -1,6 +1,6 @@
 # Plan: distributing Audible Backup as a Flatpak
 
-Status: proposal. Nothing here is implemented yet.
+Status: Phase 1 is implemented. Phases 2–6 are still a proposal.
 
 ## Goal
 
@@ -109,12 +109,24 @@ existing basic-auth option is aimed at a different threat model.
 
 ## Phases
 
-**Phase 1 — make the app desktop-shaped** *(no Flatpak involved yet; all testable in CI today)*
-- XDG-aware defaults in `config.ts`, gated on `FLATPAK_ID`
-- Bind to `127.0.0.1`, accept `WEB_PORT=0` and report the chosen port on stdout so the shell can read it
-- Per-launch token middleware
-- Hide user/login UI in single-user desktop mode
-- Clear error when the Python helper is unavailable (already partly done)
+**Phase 1 — make the app desktop-shaped** ✅ *done*
+- XDG-aware defaults in `config.ts`, gated on `FLATPAK_ID` (or `AUDIBLE_DESKTOP=1`)
+- Binds `127.0.0.1` and defaults to port 0, printing `AUDIBLE_BACKUP_URL=…` for the launcher to read
+- Per-launch token, presented once in the URL and then held as a cookie
+- One implicit user (`DESKTOP_USER`), no login screen, no account controls in the UI
+- Clear error when the Python helper is unavailable (already done earlier)
+
+Try it without any Flatpak tooling:
+
+```bash
+AUDIBLE_DESKTOP=1 npm run server
+# -> AUDIBLE_BACKUP_URL=http://127.0.0.1:43177/?token=…
+```
+
+Data lands in `$XDG_DATA_HOME/audible-backup`, converted books in
+`$XDG_MUSIC_DIR/Audiobooks`. Nothing changes for Docker or server installs:
+desktop mode is off unless `FLATPAK_ID`/`AUDIBLE_DESKTOP` is set, and explicit
+environment variables still win in every mode.
 
 **Phase 2 — desktop integration**
 - `io.github.g_freeks.audible_backup.desktop`

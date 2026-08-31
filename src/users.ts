@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import * as fs from "fs";
 import * as path from "path";
-import "./config.ts"; // ensure .env is loaded before reading USERS_DIR
+import { isDesktopMode, desktopPaths } from "./config.ts"; // also loads .env
 
 /**
  * Multi-tenant user registry. Users live in a JSON file under the users root;
@@ -31,13 +31,19 @@ export interface UserDirs {
 
 export const USERNAME_PATTERN = /^[a-zA-Z0-9_-]{1,32}$/;
 
+/**
+ * A desktop install has exactly one implicit user, so the whole per-user
+ * machinery (isolated dirs, database, Audible credentials) is reused without
+ * ever showing a login screen.
+ */
+export const DESKTOP_USER = "default";
+
 export function usersRoot(): string {
-  return path.resolve(
-    (process.env.USERS_DIR || "~/Music/audible-backup/users").replace(
-      "~",
-      process.env.HOME || "",
-    ),
-  );
+  if (process.env.USERS_DIR) {
+    return path.resolve(process.env.USERS_DIR.replace("~", process.env.HOME || ""));
+  }
+  if (isDesktopMode()) return path.join(desktopPaths.dataDir, "users");
+  return path.resolve("~/Music/audible-backup/users".replace("~", process.env.HOME || ""));
 }
 
 function usersFile(): string {
@@ -66,6 +72,17 @@ export function getUser(name: string): User | undefined {
 }
 
 export function userDirs(name: string): UserDirs {
+  // Desktop mode has a single user, so its data lives at the XDG locations
+  // directly rather than nested under a per-user directory.
+  if (isDesktopMode()) {
+    return {
+      root: desktopPaths.dataDir,
+      targetDir: desktopPaths.targetDir,
+      outputDir: desktopPaths.outputDir,
+      dbPath: desktopPaths.dbPath,
+      authDir: desktopPaths.authDir,
+    };
+  }
   const root = path.join(usersRoot(), name);
   return {
     root,
@@ -74,6 +91,18 @@ export function userDirs(name: string): UserDirs {
     dbPath: path.join(root, "audiobooks.db"),
     authDir: path.join(root, "audible"),
   };
+}
+
+/** Create the implicit desktop user on first launch. Returns its name. */
+export function ensureDesktopUser(): string {
+  if (!getUser(DESKTOP_USER)) {
+    addUser(DESKTOP_USER);
+  }
+  const dirs = userDirs(DESKTOP_USER);
+  for (const dir of [dirs.targetDir, dirs.outputDir, dirs.authDir]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return DESKTOP_USER;
 }
 
 function hashPassword(password: string): { hash: string; salt: string } {

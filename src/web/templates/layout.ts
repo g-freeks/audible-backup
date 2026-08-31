@@ -4,6 +4,8 @@ export interface UserNav {
   /** Signed-in user; absent in legacy single-user mode (no users registered). */
   current?: string;
   others: { name: string; hasPassword: boolean }[];
+  /** Desktop install: one implicit user, so no account controls at all. */
+  desktop?: boolean;
 }
 
 /** Opens the operation log, which stays closed until asked for. */
@@ -13,6 +15,18 @@ const logToggle = `<button id="log-toggle" class="btn btn-sm btn-ghost" type="bu
     </button>`;
 
 function topbar(userNav: UserNav): string {
+  // Desktop install: no accounts to switch between, but Settings still holds
+  // the Audible connection and activation bytes.
+  if (userNav.desktop) {
+    return `<header class="topbar">
+    <span class="topbar-title">Audible Backup</span>
+    <div class="topbar-actions">
+      ${logToggle}
+      <a class="btn btn-sm btn-ghost" href="/user/settings">Settings</a>
+    </div>
+  </header>`;
+  }
+
   // Legacy single-user mode: no session to show, but users must still be able
   // to find the sign-in / add-user flow.
   if (!userNav.current) {
