@@ -164,3 +164,22 @@ describe("single-user desktop UI", () => {
     assert.ok(!/Settings — /.test(html), "no user name in the heading");
   });
 });
+
+describe("finished audiobooks on the desktop", () => {
+  it("offers to open the output folder instead of a ZIP download", async () => {
+    const html = await (await app.request("/", withToken)).text();
+    assert.match(html, /hx-post="\/open-output"/, "Open folder button is present");
+  });
+
+  it("creates the output folder and asks the desktop to open it", async () => {
+    ensureDesktopUser();
+    fs.rmSync(desktopPaths.outputDir, { recursive: true, force: true });
+
+    const res = await app.request("/open-output", { method: "POST", ...withToken });
+
+    // xdg-open is absent in CI; spawning it must still not fail the request,
+    // because the folder being there is the part the user depends on.
+    assert.equal(res.status, 204);
+    assert.ok(fs.existsSync(desktopPaths.outputDir), "output folder exists");
+  });
+});

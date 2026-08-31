@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Audible Backup
+GenericName=Audiobook Backup
+Comment=Back up your Audible library as chapter-split MP3s
+Exec=audible-backup
+Icon=io.github.g_freeks.audible_backup
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=Audible;Audiobook;Backup;MP3;Convert;Download;
+StartupNotify=true
+StartupWMClass=io.github.g_freeks.audible_backup

@@ -8,6 +8,9 @@ node_modules
 .mcp.json
 data/
 test/
+# Desktop/Flatpak assets and maintainer scripts: dead weight in a server image.
+desktop/
+scripts/
 *.db
 *.db-wal
 *.db-shm

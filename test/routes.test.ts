@@ -897,6 +897,20 @@ describe("POST /prepare/:asin", () => {
   });
 });
 
+describe("POST /open-output", () => {
+  it("does not exist outside desktop mode", async () => {
+    // A server install has no desktop session to open a file manager in, and
+    // the browser is often on another machine entirely.
+    const res = await app.request("/open-output", { method: "POST" });
+    assert.equal(res.status, 404);
+  });
+
+  it("is not offered in the server UI", async () => {
+    const html = await (await app.request("/")).text();
+    assert.ok(!html.includes("/open-output"), "no Open folder button");
+  });
+});
+
 describe("row actions are unambiguous", () => {
   it("uses one Get MP3s action for every un-converted state", async () => {
     upsertBook("B0STATE0001", "A", "Not downloaded yet");

@@ -85,6 +85,22 @@ Until the first user is created, the app runs in legacy single-user mode
 using the `.env`-configured paths. See `node app.ts help` for all CLI
 commands and flags.
 
+## Desktop app
+
+There is a desktop shell — a real window with its own icon, no terminal and no
+browser tab — intended for eventual Flatpak distribution. It needs **gjs**,
+**GTK 4** and **WebKitGTK 6.0** alongside Node 24 and ffmpeg:
+
+```bash
+./desktop/audible-backup
+```
+
+In this mode the app runs as a single user with no login, keeps its data in
+`$XDG_DATA_HOME/audible-backup`, and writes finished audiobooks straight to
+`$XDG_MUSIC_DIR/Audiobooks` — no ZIP download needed. See
+[`desktop/README.md`](desktop/README.md) and
+[`docs/flatpak-plan.md`](docs/flatpak-plan.md).
+
 ## Legal
 
 This tool is for **personal backups of audiobooks you own**. It uses your

@@ -26,6 +26,7 @@ import {
 import type { UserNav } from "./templates/layout.ts";
 import { zipStream, zipDirectoryEntries } from "./zip.ts";
 import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { secureHeaders } from "hono/secure-headers";
 import type { Context } from "hono";
@@ -320,6 +321,29 @@ routes.post("/user/audible/complete", async (c) => {
     const msg = err instanceof Error ? err.message : String(err);
     return renderSettings(c, { error: `Sign-in failed: ${msg}` }, 400);
   }
+});
+
+/**
+ * Desktop only: reveal the finished audiobooks in the user's file manager.
+ * Inside Flatpak `xdg-open` is the portal shim, so this asks the host to open
+ * the folder rather than reaching out of the sandbox itself.
+ */
+routes.post("/open-output", (c) => {
+  if (!isDesktopMode()) return c.notFound();
+
+  const dir = requestPaths().outputDir;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const child = spawn("xdg-open", [dir], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    return c.text("Could not open the folder", 500);
+  }
+  return c.body(null, 204);
 });
 
 routes.post("/user/reset-db", (c) => {
@@ -819,8 +843,14 @@ routes.post("/prepare/:asin", async (c) => {
     .then(() =>
       reporter.done({
         success: true,
-        summary: "Ready — your download is starting",
-        downloadUrl: `/download/converted/${asin}`,
+        // A desktop install already wrote the MP3s to the user's music folder,
+        // so pulling the same files back through a ZIP would be busywork.
+        ...(isDesktopMode()
+          ? { summary: `Saved to ${paths.outputDir}` }
+          : {
+              summary: "Ready — your download is starting",
+              downloadUrl: `/download/converted/${asin}`,
+            }),
       }),
     )
     .catch((err: Error) =>
