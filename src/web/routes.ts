@@ -45,8 +45,36 @@ import {
   userDirs,
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
+import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
+import { isDesktopMode } from "../config.ts";
+import { ensureDesktopUser } from "../users.ts";
 
 export const routes = new Hono();
+
+// Desktop mode: require the per-launch token before anything else. The
+// launcher opens the app with ?token=..., which is then stored as a cookie.
+routes.use("*", async (c, next) => {
+  const token = desktopToken();
+  if (!token) return next();
+
+  if (getCookie(c, DESKTOP_COOKIE) === token) return next();
+
+  if (c.req.query("token") === token) {
+    setCookie(c, DESKTOP_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+    });
+    if (c.req.method === "GET") {
+      const url = new URL(c.req.url);
+      url.searchParams.delete("token");
+      return c.redirect(url.pathname + url.search);
+    }
+    return next();
+  }
+
+  return c.text("Forbidden", 403);
+});
 
 // Strict CSP is possible because all client JS lives in /static/app.js —
 // no inline handlers or script blocks. Inline <style> needs unsafe-inline.
@@ -80,6 +108,10 @@ function isValidAsin(asin: string): boolean {
 const PUBLIC_PATHS = new Set(["/login", "/user/switch", "/user/add"]);
 
 routes.use("*", async (c, next) => {
+  // One implicit user, no login screen.
+  if (isDesktopMode()) {
+    return runWithUser(ensureDesktopUser(), () => next());
+  }
   if (PUBLIC_PATHS.has(c.req.path)) return next();
   if (!hasUsers()) return next();
 
@@ -112,6 +144,7 @@ function requestPaths() {
 }
 
 function buildUserNav(): UserNav {
+  if (isDesktopMode()) return { others: [], desktop: true };
   const name = currentUserName();
   if (!name) return { others: [] };
   return {
@@ -130,6 +163,14 @@ function startUserSession(c: Context, userName: string): void {
 }
 
 // --- User routes ---
+
+const ACCOUNT_PATHS = ["/login", "/user/switch", "/user/add", "/user/logout"];
+routes.use("*", async (c, next) => {
+  if (isDesktopMode() && ACCOUNT_PATHS.includes(c.req.path)) {
+    return c.text("Not available in desktop mode", 404);
+  }
+  return next();
+});
 
 routes.get("/login", (c) => {
   const preselect = c.req.query("user");
@@ -211,6 +252,7 @@ async function renderSettings(
     hasPassword: userHasPassword(user),
     audible: await audibleStatus(),
     userNav: buildUserNav(),
+    desktop: isDesktopMode(),
     ...extra,
   });
   return status ? c.html(html, status as 400) : c.html(html);

@@ -100,6 +100,8 @@ export interface SettingsView {
   message?: string;
   error?: string;
   userNav?: UserNav;
+  /** Desktop install: no account, so no password or user identity shown. */
+  desktop?: boolean;
 }
 
 const MARKETPLACES: [string, string][] = [
@@ -174,11 +176,11 @@ function audibleCard(audible: AudibleStatus): string {
 }
 
 export function settingsPage(view: SettingsView): string {
-  const { userName, activationBytes, hasPassword, message, error, userNav } = view;
+  const { userName, activationBytes, hasPassword, message, error, userNav, desktop } = view;
   const content = `
     ${formStyles}
     <div class="auth-wrap">
-      <h1>Settings — ${escapeHtml(userName)}</h1>
+      <h1>${desktop ? "Settings" : `Settings — ${escapeHtml(userName)}`}</h1>
       ${message ? `<div class="auth-error" style="color:var(--success)">${escapeHtml(message)}</div>` : ""}
       ${error ? `<div class="auth-error">${escapeHtml(error)}</div>` : ""}
       ${audibleCard(view.audible)}
@@ -186,9 +188,10 @@ export function settingsPage(view: SettingsView): string {
         <form method="post" action="/user/settings">
           <label for="set-bytes">Audible activation bytes</label>
           <input id="set-bytes" name="activation_bytes" value="${escapeHtml(activationBytes)}" placeholder="e.g. 1a2b3c4d">
+          ${desktop ? "" : `
           <label for="set-password">New password <span class="hint">(leave blank to keep ${hasPassword ? "current password" : "no password"})</span></label>
-          <input id="set-password" name="password" type="password" autocomplete="new-password">
-          ${hasPassword ? `
+          <input id="set-password" name="password" type="password" autocomplete="new-password">`}
+          ${!desktop && hasPassword ? `
           <div class="checkbox-row">
             <input id="set-remove-pw" name="remove_password" type="checkbox" value="true">
             <label for="set-remove-pw">Remove password</label>
