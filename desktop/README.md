@@ -44,3 +44,23 @@ node scripts/capture-screenshots.mjs # screenshots/*.png from a real server
 
 `test/desktop-files.test.ts` checks that the app ID, the icon sizes, and the
 screenshot URLs in the metainfo all still agree with what is on disk.
+
+## Building the Flatpak
+
+The manifest lives in [`../flatpak/`](../flatpak/):
+
+```bash
+flatpak-builder --user --install --force-clean build \
+  flatpak/io.github.g_freeks.audible_backup.yml
+flatpak run io.github.g_freeks.audible_backup
+```
+
+Its dependency modules are generated and committed — regenerate them after
+changing `package-lock.json` or the pinned `audible` version:
+
+```bash
+python3 scripts/generate-flatpak-sources.py
+```
+
+`test/flatpak.test.ts` fails if the generated files fall behind the lockfile,
+which is the mistake that otherwise only shows up as a failed Flathub build.

@@ -11,6 +11,7 @@ test/
 # Desktop/Flatpak assets and maintainer scripts: dead weight in a server image.
 desktop/
 scripts/
+flatpak/
 *.db
 *.db-wal
 *.db-shm
