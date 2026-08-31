@@ -43,6 +43,14 @@ npm run db-reset      # Reset the database
 **Core modules** (`src/`):
 - `config.ts` — Loads `.env` manually (no dotenv dependency), exports a `config` object. Environment variables override `.env` values.
 - `config.ts` also exposes **desktop mode** (`isDesktopMode()`, `desktopPaths`), enabled by `FLATPAK_ID` or `AUDIBLE_DESKTOP=1`. It switches the app to a single implicit user (`DESKTOP_USER`) with XDG paths — data under `$XDG_DATA_HOME/audible-backup`, converted books in `$XDG_MUSIC_DIR/Audiobooks` — binds the server to `127.0.0.1` on an OS-assigned port, prints `AUDIBLE_BACKUP_URL=` for a launcher to read, and guards every request with a per-launch token (`src/web/desktop.ts`). Account routes 404 and the account UI is hidden. Explicit env vars still override paths in every mode. See `docs/flatpak-plan.md`.
+- **Desktop shell** (`desktop/`) — a GJS + GTK4 + WebKitGTK launcher
+  (`desktop/audible-backup`) that spawns `server.ts`, waits for its
+  `AUDIBLE_BACKUP_URL=` line, and shows it in a window; plus the `.desktop`
+  entry, AppStream metainfo, icons and store screenshots. Icons and screenshots
+  are regenerated with `node scripts/render-icons.mjs` and
+  `node scripts/capture-screenshots.mjs` and committed. `test/desktop-files.test.ts`
+  checks that the app ID, icon sizes and screenshot URLs stay in sync. There is
+  no gjs in the dev container, so the shell itself cannot be run here.
 - `users.ts` — Multi-tenant user registry (`users.json` under `USERS_DIR`). Each user has an isolated data directory (`aax/`, `converted/`, `audible/`, `audiobooks.db`), optional scrypt-hashed password, and optional per-user activation bytes. The current user travels through async call chains via `AsyncLocalStorage` (`runWithUser`/`currentUser`), which is how `db.ts` and the audible-cli wrappers resolve per-user paths without explicit parameters. With zero registered users the app runs in legacy single-user mode driven by env config.
 - `db.ts` — SQLite database with a single `audiobooks` table tracking download/conversion state by ASIN. Keeps one lazy connection per database file; the path resolves to the current user's DB in multi-tenant mode, else `DB_PATH`/config.
 - `pyhelper.ts` — Spawns `helper/audible_helper.py` (JSON-over-stdout bridge to the `audible` Python package) for structured library listings, AAXC downloads with decryption vouchers, and the two-step Audible sign-in (`login-url`, `login-complete`, `login-status`). Throws `HelperUnavailableError` when python3/the package is missing so callers can fall back to audible-cli.

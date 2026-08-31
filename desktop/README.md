@@ -1,0 +1,46 @@
+# Desktop integration
+
+Everything needed to ship Audible Backup as a desktop application, rather than
+a server you point a browser at. See [`../docs/flatpak-plan.md`](../docs/flatpak-plan.md)
+for how this fits into the Flatpak work.
+
+| File | Purpose |
+| --- | --- |
+| `audible-backup` | GJS shell: starts the server, shows it in a WebKitGTK window, stops it on close |
+| `io.github.g_freeks.audible_backup.desktop` | Application launcher entry |
+| `io.github.g_freeks.audible_backup.metainfo.xml` | AppStream metadata for the Flathub listing |
+| `icons/` | Scalable SVG plus rendered 128px and 256px PNGs |
+| `screenshots/` | Store screenshots, captured from the running app |
+
+## Running the shell from a checkout
+
+You need **gjs**, **GTK 4** and **WebKitGTK 6.0** on the system (on Debian and
+Ubuntu: `gjs libgtk-4-1 libwebkitgtk-6.0-4`), plus the usual Node 24 and ffmpeg:
+
+```bash
+./desktop/audible-backup
+```
+
+It finds `server.ts` relative to itself and runs it with `AUDIBLE_DESKTOP=1`, so
+data lands in `$XDG_DATA_HOME/audible-backup` and converted books in
+`$XDG_MUSIC_DIR/Audiobooks`. Two environment variables override what it starts,
+which is how the Flatpak build points it at bundled copies:
+
+- `AUDIBLE_BACKUP_NODE` — the Node binary (defaults to `/app/bin/node`, else `node`)
+- `AUDIBLE_BACKUP_SERVER` — the server entry point (defaults to
+  `/app/share/audible-backup/server.ts`, else `../server.ts`)
+
+The server's own output is echoed to stderr prefixed with `[server]`, so
+`./desktop/audible-backup 2>&1 | less` is the way to debug a launch.
+
+## Regenerating assets
+
+Both write into this directory and the results are committed:
+
+```bash
+node scripts/render-icons.mjs        # icons/*/*.png from icons/scalable/*.svg
+node scripts/capture-screenshots.mjs # screenshots/*.png from a real server
+```
+
+`test/desktop-files.test.ts` checks that the app ID, the icon sizes, and the
+screenshot URLs in the metainfo all still agree with what is on disk.

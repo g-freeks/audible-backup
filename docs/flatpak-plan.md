@@ -1,6 +1,6 @@
 # Plan: distributing Audible Backup as a Flatpak
 
-Status: Phase 1 is implemented. Phases 2–6 are still a proposal.
+Status: Phases 1 and 2 are implemented. Phases 3–6 are still a proposal.
 
 ## Goal
 
@@ -29,7 +29,7 @@ them.
 | Option | Verdict |
 | --- | --- |
 | Server + open the user's browser via `xdg-open` | Rejected. An app with no window is a poor Flatpak citizen and invites review pushback. |
-| **Thin WebKitGTK shell that loads `127.0.0.1:<port>`** | **Recommended.** ~150 lines of GJS or PyGObject. Real window, icon, taskbar entry; the entire existing UI is reused unchanged. |
+| **Thin WebKitGTK shell that loads `127.0.0.1:<port>`** | **Chosen.** ~250 lines of GJS (`desktop/audible-backup`). Real window, icon, taskbar entry; the entire existing UI is reused unchanged. |
 | Rewrite the UI in GTK | Rejected. Throws away everything for no user-visible gain. |
 
 The shell owns the lifecycle: spawn Node on a random free port, wait for it to
@@ -98,14 +98,15 @@ existing basic-auth option is aimed at a different threat model.
 
 | Concern | Today | Flatpak build |
 | --- | --- | --- |
-| Runtime | `node:24-bookworm-slim` image | `org.freedesktop.Platform` 24.08 + `Sdk.Extension.node24` at build time, Node binary copied into `/app` |
+| Runtime | `node:24-bookworm-slim` image | `org.gnome.Platform` 50 + `org.freedesktop.Sdk.Extension.node24` at build time, Node binary copied into `/app` |
 | ffmpeg | apt package | `org.freedesktop.Platform.ffmpeg-full` extension — **must verify it ships the `ffmpeg` binary and libmp3lame**, else build a minimal ffmpeg from source |
 | npm deps | `npm ci` at build | Vendored offline via `flatpak-node-generator` (only `hono`, `@hono/node-server`; `playwright-core` is a devDependency and excluded) |
 | Python deps | `pip install audible-cli` | Vendored offline via `flatpak-pip-generator` |
-| Entry point | `node server.ts` | GJS/PyGObject shell → spawns `node server.ts` → WebKitGTK window |
+| Entry point | `node server.ts` | GJS shell → spawns `node server.ts` → WebKitGTK window |
 | Config | env vars, `.env` | XDG dirs, `FLATPAK_ID` detection; `.env` unused |
 | Users | multi-tenant | single-user (legacy mode), user UI hidden |
 | Distribution | GHCR image | Flathub (plus GitHub Releases `.flatpak` bundles) |
+| Window toolkit | none | GTK 4 + WebKitGTK 6.0, both from the GNOME runtime |
 
 ## Phases
 
@@ -128,17 +129,52 @@ Data lands in `$XDG_DATA_HOME/audible-backup`, converted books in
 desktop mode is off unless `FLATPAK_ID`/`AUDIBLE_DESKTOP` is set, and explicit
 environment variables still win in every mode.
 
-**Phase 2 — desktop integration**
-- `io.github.g_freeks.audible_backup.desktop`
-- `io.github.g_freeks.audible_backup.metainfo.xml` (AppStream: summary, description, screenshots at public URLs, release notes, license, content rating)
-- Icons: 128px, 256px, scalable SVG
-- The WebKitGTK shell itself
+**Phase 2 — desktop integration** ✅ *done*
+- `desktop/io.github.g_freeks.audible_backup.desktop`
+- `desktop/io.github.g_freeks.audible_backup.metainfo.xml` (AppStream: summary,
+  description, screenshots at raw.githubusercontent URLs, release notes,
+  license, content rating, branding colours)
+- Icons: scalable SVG plus rendered 128px and 256px PNGs
+  (`node scripts/render-icons.mjs` after editing the SVG)
+- Screenshots taken from the running app in desktop mode
+  (`node scripts/capture-screenshots.mjs`), so the store listing cannot drift
+  from reality
+- The GJS/WebKitGTK shell, `desktop/audible-backup`
+
+The shell spawns the server, waits for its `AUDIBLE_BACKUP_URL=` line, and shows
+that URL in a `WebKit.WebView`. Three behaviours are worth knowing:
+
+- **External links leave the window.** Anything outside the server's own origin
+  — above all the Audible sign-in page — is handed to `Gtk.UriLauncher`, so it
+  opens in the user's real browser where their Amazon session and password
+  manager already are.
+- **The server's death is visible.** `wait_async` on the subprocess swaps the
+  window over to an error page carrying the tail of the server log, rather than
+  leaving a dead white page.
+- **Closing the window stops the server**, so no headless Node process is left
+  holding the database.
+
+Desktop mode also stopped pushing a ZIP at the browser once a book is ready:
+the MP3s are already in the music folder, so the topbar offers **Open folder**
+instead, which shells out to `xdg-open` — the portal shim inside Flatpak.
+
+The `.desktop` file, the AppStream metadata, the icons and the shell are all
+checked by `test/desktop-files.test.ts`, which is the only thing standing
+between a renamed app ID and a broken Flathub build.
+
+This phase cannot be fully verified here: there is no `gjs` or WebKitGTK in the
+dev container, so the shell is unrun. Its first real execution will be the
+Phase 4 smoke test.
 
 **Phase 3 — the manifest**
-- `io.github.g_freeks.audible_backup.yml`
+- `io.github.g_freeks.audible_backup.yml`, on `org.gnome.Platform` 50
 - Generated offline source manifests for npm and pip
 - ffmpeg resolution (extension vs. source build)
-- Permissions: `--share=network`, `--socket=wayland`, `--socket=fallback-x11`, `--device=dri`, `--filesystem=xdg-music:create`
+- Permissions: `--share=network`, `--socket=wayland`, `--socket=fallback-x11`,
+  `--device=dri`, `--filesystem=xdg-music:create`
+- Install layout the shell already assumes: `/app/bin/node`,
+  `/app/share/audible-backup/server.ts`, and the shell itself as
+  `/app/bin/audible-backup`
 
 **Phase 4 — build and verify**
 - `flatpak-builder` job in CI via `flatpak/flatpak-github-actions`
@@ -166,17 +202,24 @@ environment variables still win in every mode.
    treated as an acceptable outcome, not a failure.
 3. **ffmpeg availability** is a hard blocker if `ffmpeg-full` lacks the CLI or
    libmp3lame. Verify in Phase 3 before building anything else on it.
-4. **Bundle size.** Node plus Python plus ffmpeg is likely 200–300 MB. Acceptable
+4. **Runtime and SDK-extension versions.** The plan originally named
+   `org.freedesktop.Platform`, which ships neither WebKitGTK nor GJS; the shell
+   needs `org.gnome.Platform`, which has both. GNOME 48 went end-of-life in
+   March 2026, so the manifest targets 50. The matching
+   `org.freedesktop.Sdk.Extension.node24` branch has to line up with the
+   freedesktop base that GNOME 50 is built on — confirm the exact branch when
+   writing the manifest rather than assuming `24.08`.
+5. **Bundle size.** Node plus Python plus ffmpeg is likely 200–300 MB. Acceptable
    but worth measuring.
-5. **Browser tests don't run inside the sandbox.** The existing suites keep
+6. **Browser tests don't run inside the sandbox.** The existing suites keep
    running against the plain server in CI; the Flatpak job only smoke-tests.
 
 ## Rough effort
 
 | Phase | Estimate |
 | --- | --- |
-| 1 — desktop-shaped app | 1 day |
-| 2 — desktop integration + shell | 1–2 days |
+| 1 — desktop-shaped app | ✅ done |
+| 2 — desktop integration + shell | ✅ done |
 | 3 — manifest and offline sources | 2–3 days (most of the pain: pip/npm vendoring, ffmpeg) |
 | 4 — CI and verification | 1 day |
 | 5 — Flathub submission | unpredictable; days to weeks of review latency |

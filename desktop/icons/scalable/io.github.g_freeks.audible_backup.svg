@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Audible Backup</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ba4ff"/>
+      <stop offset="1" stop-color="#4058d8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="56" ry="56" fill="url(#bg)"/>
+
+  <!-- Headphones: the band arcs over the arrow, earcups flank it. -->
+  <g fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round">
+    <path d="M66 132 A 62 62 0 0 1 190 132"/>
+  </g>
+  <g fill="#ffffff">
+    <rect x="52" y="126" width="28" height="58" rx="14"/>
+    <rect x="176" y="126" width="28" height="58" rx="14"/>
+  </g>
+
+  <!-- Download arrow: the "backup" half of the idea. -->
+  <g fill="#ffffff">
+    <rect x="119" y="104" width="18" height="46" rx="9"/>
+    <path d="M104 143 L152 143 L128 179 Z"/>
+  </g>
+</svg>

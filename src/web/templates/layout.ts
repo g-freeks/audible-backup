@@ -22,6 +22,9 @@ function topbar(userNav: UserNav): string {
     <span class="topbar-title">Audible Backup</span>
     <div class="topbar-actions">
       ${logToggle}
+      <button class="btn btn-sm btn-ghost" type="button"
+        hx-post="/open-output" hx-swap="none"
+        title="Show the finished audiobooks in your file manager">Open folder</button>
       <a class="btn btn-sm btn-ghost" href="/user/settings">Settings</a>
     </div>
   </header>`;

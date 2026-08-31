@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.g_freeks.audible_backup</id>
+
+  <name>Audible Backup</name>
+  <summary>Back up your Audible library as chapter-split MP3s</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>ISC</project_license>
+
+  <developer id="io.github.g_freeks">
+    <name>g-freeks</name>
+  </developer>
+
+  <description>
+    <p>
+      Audible Backup makes a personal, DRM-free copy of the audiobooks you have
+      bought. It signs in to your own Audible account, downloads your titles,
+      and converts them into chapter-split, tagged MP3 files that play in any
+      music player — no subscription required to keep listening.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Sign in to Audible from the app; your password is only ever typed on Amazon's own page</li>
+      <li>Browse your library, search it, and pick the books you want</li>
+      <li>One click downloads a book and converts it, with a live progress log</li>
+      <li>Splits each book into one MP3 per chapter, with cover art and tags</li>
+      <li>Handles both classic AAX and newer AAXC titles</li>
+      <li>Saves finished audiobooks straight into your Music folder</li>
+    </ul>
+    <p>
+      This tool is for backing up audiobooks you own. It uses your own account
+      and credentials, in the same way desktop tools like ffmpeg have long
+      supported personal-use decryption. Removing DRM may be restricted where
+      you live and by Audible's terms of service.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.g_freeks.audible_backup.desktop</launchable>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/g-freeks/audible-backup/main/desktop/screenshots/library.png</image>
+      <caption>The library, with each book's download and conversion state</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/g-freeks/audible-backup/main/desktop/screenshots/settings.png</image>
+      <caption>Connecting an Audible account, which happens on Audible's own page</caption>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/g-freeks/audible-backup</url>
+  <url type="bugtracker">https://github.com/g-freeks/audible-backup/issues</url>
+  <url type="vcs-browser">https://github.com/g-freeks/audible-backup</url>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+
+  <keywords>
+    <keyword>Audible</keyword>
+    <keyword>Audiobook</keyword>
+    <keyword>Backup</keyword>
+    <keyword>MP3</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#8ba4ff</color>
+    <color type="primary" scheme_preference="dark">#2b3566</color>
+  </branding>
+
+  <requires>
+    <internet>always</internet>
+  </requires>
+
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+
+  <releases>
+    <release version="1.2.0" date="2026-08-31">
+      <description>
+        <p>First release with a desktop application: a real window, its own icon, and no terminal.</p>
+        <ul>
+          <li>Audiobooks are converted straight into your Music folder</li>
+          <li>Audible sign-in opens in your normal browser</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

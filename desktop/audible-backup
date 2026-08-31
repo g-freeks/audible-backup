@@ -1,0 +1,272 @@
+#!/usr/bin/gjs -m
+
+/**
+ * Desktop shell for Audible Backup.
+ *
+ * The app is a Hono server that renders its own UI. On the desktop we do not
+ * want a terminal or a stray browser tab, so this shell owns the lifecycle:
+ * spawn the server on a loopback port, wait for it to announce its URL, show
+ * that URL in a WebKitGTK window, and stop the server when the window closes.
+ *
+ * Everything Audible-specific lives in the server; this file deliberately
+ * knows nothing about books, only about processes and windows.
+ */
+
+import GLib from "gi://GLib";
+import Gio from "gi://Gio";
+import Gtk from "gi://Gtk?version=4.0";
+import WebKit from "gi://WebKit?version=6.0";
+import system from "system";
+
+const APP_ID = "io.github.g_freeks.audible_backup";
+/** server.ts prints exactly this line once it is listening. */
+const URL_PREFIX = "AUDIBLE_BACKUP_URL=";
+/** Keep the tail of the server's output so a failure can be shown, not guessed. */
+const LOG_LINES = 40;
+
+function nodeBinary() {
+  const explicit = GLib.getenv("AUDIBLE_BACKUP_NODE");
+  if (explicit) return explicit;
+  return GLib.file_test("/app/bin/node", GLib.FileTest.IS_EXECUTABLE)
+    ? "/app/bin/node"
+    : "node";
+}
+
+function serverScript() {
+  const explicit = GLib.getenv("AUDIBLE_BACKUP_SERVER");
+  if (explicit) return explicit;
+
+  const bundled = "/app/share/audible-backup/server.ts";
+  if (GLib.file_test(bundled, GLib.FileTest.EXISTS)) return bundled;
+
+  // Running from a source checkout: this script lives in <repo>/desktop/.
+  const [scriptPath] = GLib.filename_from_uri(import.meta.url);
+  const here = GLib.path_get_dirname(scriptPath);
+  return GLib.canonicalize_filename("../server.ts", here);
+}
+
+/** Only the server we launched may be shown in the window. */
+function isOwnOrigin(uri, baseUri) {
+  try {
+    const target = GLib.Uri.parse(uri, GLib.UriFlags.NONE);
+    const base = GLib.Uri.parse(baseUri, GLib.UriFlags.NONE);
+    return (
+      target.get_scheme() === "http" &&
+      target.get_host() === base.get_host() &&
+      target.get_port() === base.get_port()
+    );
+  } catch {
+    return false;
+  }
+}
+
+class Server {
+  constructor() {
+    this._proc = null;
+    this._log = [];
+    this._settled = false;
+  }
+
+  get log() {
+    return this._log.join("\n");
+  }
+
+  /**
+   * `onReady(url)` fires once the server announces itself; `onFailure(message)`
+   * fires if it dies — before or after that point, since a crash mid-session
+   * should replace the window contents rather than leave a dead page.
+   */
+  start(onReady, onFailure) {
+    const launcher = new Gio.SubprocessLauncher({
+      flags:
+        Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE,
+    });
+    // Redundant under Flatpak (FLATPAK_ID already implies desktop mode) but
+    // makes the shell work unchanged from a source checkout.
+    launcher.setenv("AUDIBLE_DESKTOP", "1", true);
+
+    try {
+      this._proc = launcher.spawnv([nodeBinary(), serverScript()]);
+    } catch (e) {
+      onFailure(`Could not start the server: ${e.message}`);
+      return;
+    }
+
+    this._readLines(onReady);
+
+    this._proc.wait_async(null, (proc, res) => {
+      try {
+        proc.wait_finish(res);
+      } catch {
+        // Cancelled or already reaped; the exit itself is what matters.
+      }
+      if (this._stopping) return;
+      this._settled = true;
+      onFailure("The Audible Backup server stopped unexpectedly.");
+    });
+  }
+
+  _readLines(onReady) {
+    const stream = new Gio.DataInputStream({
+      base_stream: this._proc.get_stdout_pipe(),
+      close_base_stream: true,
+    });
+
+    const next = () => {
+      stream.read_line_async(GLib.PRIORITY_DEFAULT, null, (source, res) => {
+        let line = null;
+        try {
+          [line] = source.read_line_finish_utf8(res);
+        } catch (e) {
+          return;
+        }
+        if (line === null) return; // EOF
+
+        this._log.push(line);
+        if (this._log.length > LOG_LINES) this._log.shift();
+        printerr(`[server] ${line}`);
+
+        if (!this._settled && line.startsWith(URL_PREFIX)) {
+          this._settled = true;
+          onReady(line.slice(URL_PREFIX.length).trim());
+        }
+        next();
+      });
+    };
+    next();
+  }
+
+  stop() {
+    if (!this._proc) return;
+    this._stopping = true;
+    // SIGTERM lets Node close the database cleanly; the process is short-lived
+    // enough that escalating to SIGKILL on a timer is not worth the complexity.
+    this._proc.send_signal(15);
+    this._proc = null;
+  }
+}
+
+function messagePage(title, detail, spinning) {
+  const box = new Gtk.Box({
+    orientation: Gtk.Orientation.VERTICAL,
+    spacing: 12,
+    valign: Gtk.Align.CENTER,
+    halign: Gtk.Align.CENTER,
+    margin_start: 36,
+    margin_end: 36,
+  });
+
+  if (spinning) {
+    const spinner = new Gtk.Spinner({ width_request: 32, height_request: 32 });
+    spinner.start();
+    box.append(spinner);
+  }
+
+  const heading = new Gtk.Label({ label: title });
+  heading.add_css_class("title-2");
+  box.append(heading);
+
+  if (detail) {
+    const body = new Gtk.Label({
+      label: detail,
+      wrap: true,
+      justify: Gtk.Justification.CENTER,
+      selectable: true,
+      max_width_chars: 72,
+    });
+    body.add_css_class("dim-label");
+    box.append(body);
+  }
+
+  return box;
+}
+
+const app = new Gtk.Application({
+  application_id: APP_ID,
+  flags: Gio.ApplicationFlags.DEFAULT_FLAGS,
+});
+const server = new Server();
+
+app.connect("activate", () => {
+  const existing = app.get_active_window();
+  if (existing) {
+    existing.present();
+    return;
+  }
+
+  const window = new Gtk.ApplicationWindow({
+    application: app,
+    title: "Audible Backup",
+    default_width: 1100,
+    default_height: 780,
+  });
+  window.set_icon_name(APP_ID);
+
+  const stack = new Gtk.Stack({
+    transition_type: Gtk.StackTransitionType.CROSSFADE,
+  });
+  stack.add_named(
+    messagePage("Starting Audible Backup", "Waiting for the server…", true),
+    "loading",
+  );
+  window.set_child(stack);
+
+  const showFailure = (message) => {
+    const detail = server.log ? `${message}\n\n${server.log}` : message;
+    const existingPage = stack.get_child_by_name("error");
+    if (existingPage) stack.remove(existingPage);
+    stack.add_named(messagePage("Something went wrong", detail, false), "error");
+    stack.set_visible_child_name("error");
+  };
+
+  server.start((url) => {
+    const view = new WebKit.WebView({ vexpand: true, hexpand: true });
+
+    // Anything that is not our own server — the Audible sign-in page, help
+    // links — belongs in the user's real browser, where their Amazon session
+    // and password manager already live.
+    view.connect("decide-policy", (_view, decision, type) => {
+      const navigable =
+        type === WebKit.PolicyDecisionType.NAVIGATION_ACTION ||
+        type === WebKit.PolicyDecisionType.NEW_WINDOW_ACTION;
+      if (!navigable) return false;
+
+      const uri = decision.get_navigation_action().get_request().get_uri();
+      if (!isOwnOrigin(uri, url)) {
+        decision.ignore();
+        new Gtk.UriLauncher({ uri }).launch(window, null, null);
+        return true;
+      }
+      if (type === WebKit.PolicyDecisionType.NEW_WINDOW_ACTION) {
+        // The app never wants a second window; keep it in this one.
+        decision.ignore();
+        view.load_uri(uri);
+        return true;
+      }
+      return false;
+    });
+
+    // Converted books already land in the music folder, so downloads are the
+    // rare manual case (an original AAX file). Send them where a browser would.
+    view.get_network_session().connect("download-started", (_session, download) => {
+      download.connect("decide-destination", (_download, suggested) => {
+        const dir =
+          GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ||
+          GLib.get_home_dir();
+        download.set_destination(GLib.build_filenamev([dir, suggested]));
+        return true;
+      });
+    });
+
+    stack.add_named(view, "app");
+    stack.set_visible_child_name("app");
+    view.load_uri(url);
+  }, showFailure);
+
+  window.present();
+});
+
+// Closing the window must not leave a headless server holding the database.
+app.connect("shutdown", () => server.stop());
+
+app.run([system.programInvocationName, ...system.programArgs]);
