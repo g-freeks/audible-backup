@@ -85,8 +85,14 @@ class Server {
     // makes the shell work unchanged from a source checkout.
     launcher.setenv("AUDIBLE_DESKTOP", "1", true);
 
+    // A desktop launch inherits whatever directory the session started in.
+    // The server resolves its own paths, but giving it a sane working
+    // directory keeps anything relative honest.
+    const script = serverScript();
+    launcher.set_cwd(GLib.path_get_dirname(script));
+
     try {
-      this._proc = launcher.spawnv([nodeBinary(), serverScript()]);
+      this._proc = launcher.spawnv([nodeBinary(), script]);
     } catch (e) {
       onFailure(`Could not start the server: ${e.message}`);
       return;

@@ -119,6 +119,16 @@ else
     sed 's/^/     | /' "$LOG"
   fi
 
+  # A page that renders is not a page that works. Every button in the UI is
+  # htmx-driven, so if these 404 the app looks fine and does nothing at all.
+  ASSETS_OK=1
+  for SCRIPT in htmx.min.js app.js sse.js; do
+    CODE=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' --max-time 20 \
+      "${URL%%\?*}static/$SCRIPT" || echo 000)
+    [ "$CODE" = "200" ] || { fail "/static/$SCRIPT returned HTTP $CODE"; ASSETS_OK=0; }
+  done
+  [ "$ASSETS_OK" = "1" ] && pass "every client script is served"
+
   # The token gate is the only thing protecting a loopback server that holds
   # Audible credentials, so a build that lost it must not ship.
   BARE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${URL%%\?*}" || echo 000)
