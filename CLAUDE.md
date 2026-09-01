@@ -43,14 +43,18 @@ npm run db-reset      # Reset the database
 **Core modules** (`src/`):
 - `config.ts` — Loads `.env` manually (no dotenv dependency), exports a `config` object. Environment variables override `.env` values.
 - `config.ts` also exposes **desktop mode** (`isDesktopMode()`, `desktopPaths`), enabled by `FLATPAK_ID` or `AUDIBLE_DESKTOP=1`. It switches the app to a single implicit user (`DESKTOP_USER`) with XDG paths — data under `$XDG_DATA_HOME/audible-backup`, converted books in `$XDG_MUSIC_DIR/Audiobooks` — binds the server to `127.0.0.1` on an OS-assigned port, prints `AUDIBLE_BACKUP_URL=` for a launcher to read, and guards every request with a per-launch token (`src/web/desktop.ts`). Account routes 404 and the account UI is hidden. Explicit env vars still override paths in every mode. See `docs/flatpak-plan.md`.
-- **Desktop shell** (`desktop/`) — a GJS + GTK4 + WebKitGTK launcher
-  (`desktop/audible-backup`) that spawns `server.ts`, waits for its
-  `AUDIBLE_BACKUP_URL=` line, and shows it in a window; plus the `.desktop`
-  entry, AppStream metainfo, icons and store screenshots. Icons and screenshots
-  are regenerated with `node scripts/render-icons.mjs` and
-  `node scripts/capture-screenshots.mjs` and committed. `test/desktop-files.test.ts`
-  checks that the app ID, icon sizes and screenshot URLs stay in sync. There is
-  no gjs in the dev container, so the shell itself cannot be run here.
+- **Desktop shell** (`desktop/`) — a GJS + GTK4 + libadwaita + WebKitGTK
+  launcher (`desktop/audible-backup`) that spawns `server.ts`, waits for its
+  `AUDIBLE_BACKUP_URL=` line, and shows it in an `Adw.ApplicationWindow`; plus
+  the `.desktop` entry, AppStream metainfo, icons and store screenshots. The
+  page renders its own dark theme unconditionally, so the shell forces the
+  window chrome dark too (`Adw.StyleManager`) rather than clashing with it —
+  meant to follow the page once the page follows the system theme instead.
+  Icons and screenshots are regenerated with `node scripts/render-icons.mjs`
+  and `node scripts/capture-screenshots.mjs` and committed.
+  `test/desktop-files.test.ts` checks that the app ID, icon sizes and
+  screenshot URLs stay in sync. There is no gjs in the dev container, so the
+  shell itself cannot be run here.
 - **Flatpak packaging** (`flatpak/`) — the manifest plus a generated module
   file listing every npm dependency as a pinned URL with a checksum (Flathub
   builds have no network). Regenerate with
@@ -74,7 +78,7 @@ npm run db-reset      # Reset the database
 - `templates/` — Server-rendered HTML templates. `html.ts` provides an auto-escaping `html` tagged template (`raw()` for trusted fragments); `components.ts` holds shared badge/progress fragments used by pages, SSE events, and OOB swaps. Templates contain no inline JS — all client behavior lives in `static/app.js` (delegated listeners, so it survives HTMX swaps), which enables the strict CSP set in `routes.ts` via `secureHeaders`.
 - `server.ts` (repo root) — Enables HTTP basic auth when `WEB_USER` and `WEB_PASSWORD` are both set.
 
-**Testing**: `test/*.test.ts` are fast unit/route tests (no browser). `test/ui/*.test.ts` are Chromium tests that spawn a real server via `test/ui/fixture.ts` — they exist for behavior HTML-level tests cannot see: htmx attribute inheritance, CSP enforcement, and delegated event handlers. `.dockerignore` excludes both. In the dev container Chromium is found at `/opt/pw-browsers/chromium`; override with `CHROMIUM_PATH`.
+**Testing**: `test/*.test.ts` are fast unit/route tests (no browser). `test/ui/*.test.ts` spawn a real server via `test/ui/fixture.ts` and drive it with Chromium by default — they exist for behavior HTML-level tests cannot see: htmx attribute inheritance, CSP enforcement, and delegated event handlers. `.dockerignore` excludes both. In the dev container Chromium is found at `/opt/pw-browsers/chromium`; override with `CHROMIUM_PATH`. Set `BROWSER=webkit` to run the same suite against WebKit instead (override its executable with `WEBKIT_PATH`) — CI runs both, since the desktop shell embeds WebKitGTK and a Chromium-only suite would miss engine differences.
 
 **Key patterns**:
 - `AudibleLibrary` and `Converter` both accept a `ProgressReporter` via constructor injection — `consoleReporter` for CLI use, `EventReporter` for web use.

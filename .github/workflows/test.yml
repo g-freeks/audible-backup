@@ -17,9 +17,16 @@ jobs:
       - run: npm test
 
   # Browser tests: htmx swaps, CSP enforcement and delegated handlers can only
-  # be verified in a real browser, so these run against a live server.
+  # be verified in a real browser, so these run against a live server. WebKit
+  # runs alongside Chromium because the desktop shell embeds WebKitGTK, and
+  # engine differences (CSP quirks, event timing) are exactly what a
+  # Chromium-only suite would miss.
   ui:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -27,9 +34,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Install Chromium matching playwright-core
-        run: npx --yes playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps chromium
+      - name: Install ${{ matrix.browser }} matching playwright-core
+        run: npx --yes playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps ${{ matrix.browser }}
       - run: npm run test:ui
+        env:
+          BROWSER: ${{ matrix.browser }}
 
   # Builds the Docker image on every pull request, and publishes it from main
   # and version tags. Building on PRs matters because nothing else covers the

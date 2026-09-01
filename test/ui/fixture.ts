@@ -1,20 +1,28 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { chromium, webkit, type Browser, type BrowserType, type Page } from "playwright-core";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 /**
  * Fixture for browser tests: a real server process against a temp data
- * directory, plus a Chromium page. These tests exist to cover behavior that
- * only appears in a browser — htmx swaps, CSP enforcement, delegated event
- * handlers — which the HTML-level route tests cannot see.
+ * directory, plus a browser page (Chromium by default, WebKit with
+ * BROWSER=webkit — the desktop shell embeds WebKitGTK, so this is what
+ * catches engine differences without needing a Linux desktop to run on).
+ * These tests exist to cover behavior that only appears in a browser — htmx
+ * swaps, CSP enforcement, delegated event handlers — which the HTML-level
+ * route tests cannot see.
  */
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 
-/** Chromium: explicit path in the dev container, otherwise Playwright's own. */
+function browserType(): BrowserType {
+  return process.env.BROWSER === "webkit" ? webkit : chromium;
+}
+
+/** Explicit path override, or the dev container's known Chromium location. */
 function browserExecutable(): string | undefined {
+  if (process.env.BROWSER === "webkit") return process.env.WEBKIT_PATH;
   if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
   const containerChromium = "/opt/pw-browsers/chromium";
   return fs.existsSync(containerChromium) ? containerChromium : undefined;
@@ -81,9 +89,11 @@ export async function startUi(
     throw new Error(`${err}\nServer output:\n${serverLog}`);
   }
 
-  const browser: Browser = await chromium.launch({
+  const engine = browserType();
+  const browser: Browser = await engine.launch({
     executablePath: browserExecutable(),
-    args: ["--no-sandbox"],
+    // --no-sandbox is a Chromium-only flag; WebKit rejects unknown args.
+    args: engine === chromium ? ["--no-sandbox"] : [],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
