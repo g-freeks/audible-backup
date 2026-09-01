@@ -96,6 +96,43 @@ if [ -z "$captured" ] && [ "$session" != "wayland" ] && have import; then
   fi
 fi
 
+# xdg-desktop-portal, last resort: no window-tool guessing, works on whatever
+# the compositor actually implements (GNOME included, where none of the tools
+# above work without KWin/wlroots). --full asks for an immediate capture;
+# without it, the portal opens its own picker for the user to click a window
+# or region, since there is no portal-level "active window" concept. Either
+# way this needs a person at the screen for the permission/picker dialog —
+# nothing here can click it for you, so it will not complete in a headless
+# session.
+#
+# This needs a helper (portal-screenshot.gjs) rather than plain gdbus: the
+# portal's Response signal goes back only to the exact connection that made
+# the Screenshot() call, so a `gdbus call` followed by a separate `gdbus
+# monitor` process never sees it — they are two different connections. gjs
+# already ships with the desktop shell, so it costs nothing extra here.
+portal_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/portal-screenshot.gjs"
+if [ -z "$captured" ] && have gjs && [ -f "$portal_helper" ]; then
+  interactive=true
+  [ "$FULL" = "1" ] && interactive=false
+
+  note "Waiting on the screenshot portal — approve the dialog if one appears (up to 30s)…"
+  portal_err="$(mktemp)"
+  uri=$(gjs "$portal_helper" "$interactive" 30 2>"$portal_err") || true
+
+  if [ -n "$uri" ]; then
+    src="${uri#file://}"
+    src="${src//+/ }"
+    src="$(printf '%b' "${src//%/\\x}")"
+    [ -f "$src" ] && cp "$src" "$OUT" && captured="xdg-desktop-portal"
+  fi
+  if [ -z "$captured" ]; then
+    printf 'warning: portal request did not produce a capture' >&2
+    [ -s "$portal_err" ] && printf ' (%s)' "$(cat "$portal_err")" >&2
+    printf '.\n' >&2
+  fi
+  rm -f "$portal_err"
+fi
+
 if [ -z "$captured" ]; then
   cat >&2 <<'EOF'
 error: no screenshot tool found.
@@ -105,6 +142,11 @@ Install whichever suits the desktop:
   KDE                spectacle
   sway / Hyprland    grim  (plus jq for window-only capture)
   X11                imagemagick, and xdotool for window-only capture
+
+gdbus (xdg-desktop-portal) was also tried and did not produce a capture —
+either it is not installed, or the portal's dialog was not approved in time.
+Run again and watch for the dialog if this is a GNOME/Wayland desktop with
+none of the above installed.
 EOF
   exit 1
 fi

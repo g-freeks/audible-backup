@@ -46,7 +46,11 @@ The window is the one thing no test suite can show: it needs a display, a
 compositor and the real WebKitGTK. Linux has no single way to capture one, so
 the script tries `gnome-screenshot`, `spectacle`, `grim` and ImageMagick's
 `import` in turn, prints which it used, and names what to install if none are
-present.
+present. As a last resort it asks the xdg-desktop-portal directly (via the
+`portal-screenshot.gjs` helper, since gjs is already required above) — this is
+what actually works on stock GNOME/Wayland, where none of the four named tools
+do. The portal needs a person at the screen to approve a dialog the first time
+it runs, so it won't complete unattended.
 
 ## Running the shell from a checkout
 
