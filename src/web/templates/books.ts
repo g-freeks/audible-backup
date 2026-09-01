@@ -176,11 +176,11 @@ export function booksPage(
       <input type="text" id="search-input" placeholder="Search by title, author, or ASIN..." autocomplete="off">
       <button type="button" id="search-clear" class="search-clear" aria-label="Clear search" hidden>&times;</button>
     </div>
-    <button id="download-selected-btn" class="btn btn-sm btn-primary" hx-post="/library/download" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-include="[name='asin']:checked" disabled title="Fetch checked books from Audible to the server">
+    <button id="download-selected-btn" class="btn btn-sm btn-primary" hx-post="/library/download-all" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-include="[name='asin']:checked" disabled title="Fetch checked books from Audible and convert them, same as the row Download button">
       Download Selected
       <span class="htmx-indicator"><span class="spinner"></span></span>
     </button>
-    <button class="btn btn-sm btn-primary" hx-post="/library/download-all" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-confirm="Download every remaining book from Audible and convert everything that's ready? This may take a while." title="Fetch every not-yet-downloaded book, then convert everything ready for conversion">
+    <button id="download-all-btn" class="btn btn-sm btn-primary" hx-post="/library/download-all" hx-target="#progress-panel" hx-swap="innerHTML" hx-disabled-elt="this" hx-confirm="Download every remaining book from Audible and convert everything that's ready? This may take a while." title="Fetch every not-yet-downloaded book, then convert everything ready for conversion">
       Download All
       <span class="htmx-indicator"><span class="spinner"></span></span>
     </button>

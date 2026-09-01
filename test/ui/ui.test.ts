@@ -321,7 +321,7 @@ describe("operation log", () => {
   it("shows Download All output in the same panel", async () => {
     await ui.page.reload({ waitUntil: "networkidle" });
     ui.page.once("dialog", (d) => d.accept());
-    await ui.page.click('button[hx-post="/library/download-all"]');
+    await ui.page.click('#download-all-btn');
     await ui.page.click("#log-toggle");
     await ui.page.waitForFunction(
       () => /Download started/.test(document.querySelector("#progress-panel")?.textContent || ""),
@@ -385,7 +385,7 @@ describe("cancelling a running operation", () => {
       "the cancel X reads as destructive (var(--danger))",
     );
 
-    const downloadAll = ui.page.locator('button[hx-post="/library/download-all"]');
+    const downloadAll = ui.page.locator('#download-all-btn');
     assert.equal(await downloadAll.isDisabled(), true, "other operations are blocked");
     const rowAction = ui.page.locator("#books-table button.split-main").first();
     assert.equal(await rowAction.isDisabled(), true, "row actions are blocked too");
@@ -402,7 +402,7 @@ describe("cancelling a running operation", () => {
     await ui.page.click("#log-toggle");
     assert.match(await ui.page.locator("#progress-panel").innerText(), /Cancell?ed/i);
     assert.equal(
-      await ui.page.locator('button[hx-post="/library/download-all"]').isDisabled(),
+      await ui.page.locator('#download-all-btn').isDisabled(),
       false,
       "buttons are usable again after cancelling",
     );

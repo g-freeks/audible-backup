@@ -92,6 +92,11 @@ describe("GET /", () => {
     assert.ok(html.includes("Download Selected"));
     assert.ok(html.includes("Download All"));
     assert.match(html, /id="download-selected-btn"[^>]*disabled/, "greyed out until something is checked");
+    assert.match(
+      html,
+      /id="download-selected-btn"[^>]*hx-post="\/library\/download-all"/,
+      "fully processes (fetch + convert) like the row Download button, not just a fetch",
+    );
   });
 
   it("gives Sync Library both a spinnable icon and a hover-to-cancel icon, not a text label", async () => {
@@ -387,7 +392,7 @@ describe("POST /library/download", () => {
   });
 });
 
-// --- Download All (Fetch All + Convert All, combined) ---
+// --- Download All / Download Selected (both fully process: fetch + convert) ---
 
 describe("POST /library/download-all", () => {
   it("returns 409 when an operation is already running", async () => {
@@ -415,6 +420,33 @@ describe("POST /library/download-all", () => {
     assert.ok(html.includes('id="status-B0ALL00001"'), "not-downloaded book queued for fetch");
     assert.ok(html.includes('id="status-B0ALL00002"'), "already-downloaded book queued for conversion");
     await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("scopes to the given ASINs — this is what Download Selected posts to", async () => {
+    // Selected: not-downloaded (queued for fetch).
+    upsertBook("B0SEL00001", { author: "A1", title: "Selected, not downloaded" });
+    // Not selected: also not-downloaded, must NOT be queued.
+    upsertBook("B0SEL00002", { author: "A2", title: "Not selected" });
+
+    const res = await app.request("/library/download-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "asin=B0SEL00001",
+    });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.ok(html.includes('id="status-B0SEL00001"'), "selected book is queued");
+    assert.ok(!html.includes('id="status-B0SEL00002"'), "unselected book is left alone");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("rejects an invalid ASIN in the selection", async () => {
+    const res = await app.request("/library/download-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "asin=not-an-asin",
+    });
+    assert.equal(res.status, 400);
   });
 });
 

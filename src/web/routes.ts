@@ -704,8 +704,11 @@ routes.get("/library/download/stream", (c) => {
   return sseStream(c, op.reporter);
 });
 
-// --- Download All: fetch every not-yet-downloaded book, then convert
-// --- everything that's ready — one operation, one confirmation in the UI.
+// --- Download All / Download Selected: fetch not-yet-downloaded books, then
+// --- convert everything that's ready — one operation, so "download" always
+// --- means fully processed, the same as the one-click Download button.
+// --- With no ASINs, this is "Download All"; with some, it's the scoped
+// --- "Download Selected" run.
 
 routes.post("/library/download-all", async (c) => {
   if (isOperationRunning()) {
@@ -715,8 +718,23 @@ routes.post("/library/download-all", async (c) => {
     );
   }
 
+  const body = await c.req.parseBody({ all: true });
+  let selected: string[] | undefined;
+  if (body.asin) {
+    selected = Array.isArray(body.asin) ? body.asin as string[] : [body.asin as string];
+    if (!selected.every(isValidAsin)) {
+      return c.html(
+        '<div class="log-panel"><div class="log-line error">Invalid ASIN</div></div>',
+        400,
+      );
+    }
+  }
+  const selectedAsins = selected ? new Set(selected) : undefined;
+
   const paths = requestPaths();
-  const notDownloaded = getNotDownloadedBooks();
+  const notDownloaded = getNotDownloadedBooks().filter(
+    (row) => !selectedAsins || selectedAsins.has(row.asin),
+  );
   const downloadBooks: AudiobookEntry[] = notDownloaded.map((row) => ({
     asin: row.asin,
     author: row.author || "",
@@ -734,6 +752,7 @@ routes.post("/library/download-all", async (c) => {
     const ignoredAsins = getIgnoredAsins();
     const queued = converter.findBookFiles().filter((b) =>
       !ignoredAsins.has(b.asin) &&
+      (!selectedAsins || selectedAsins.has(b.asin)) &&
       findConvertedChapters(paths.outputDir, b.asin, b.bookTitle).length === 0,
     );
     alreadyDownloadedQueuedSwaps = queued.map((b) => queuedSwap(b.asin)).join("");
@@ -755,7 +774,7 @@ routes.post("/library/download-all", async (c) => {
       reporter,
       false,
     );
-    await converter.convertAll();
+    await converter.convertAll(selectedAsins);
   };
 
   run()

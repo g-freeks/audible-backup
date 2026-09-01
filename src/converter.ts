@@ -536,12 +536,16 @@ export class Converter {
     }
   }
 
-  async convertAll(): Promise<void> {
+  /** `asins`, when given, scopes the run to just those books (e.g. "convert
+   * only what I selected") instead of everything ready for conversion. */
+  async convertAll(asins?: Set<string>): Promise<void> {
     this.reporter.log(`Scanning for AAX files in: ${this.sourceDir}`);
     this.reporter.log(`Output directory: ${this.outputDir}`);
 
     const ignoredAsins = getIgnoredAsins();
-    const bookFiles = this.findBookFiles().filter((b) => !ignoredAsins.has(b.asin));
+    const bookFiles = this.findBookFiles().filter(
+      (b) => !ignoredAsins.has(b.asin) && (!asins || asins.has(b.asin)),
+    );
 
     if (bookFiles.length === 0) {
       this.reporter.log("No matching AAX and chapter files found");
