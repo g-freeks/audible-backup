@@ -17,6 +17,7 @@ import {
   unignoreBook,
   isIgnored,
   upsertBook,
+  getAudiobookByAsin,
 } from "../src/db.ts";
 
 let tmpDir: string;
@@ -126,10 +127,52 @@ describe("getAllBooks ordering", () => {
 
   it("lists not-yet-downloaded books after downloaded ones, alphabetically", () => {
     markDownloaded("B000000001", "A1", "Downloaded Book", "/a.aax");
-    upsertBook("B000000002", "A2", "Zebra");
-    upsertBook("B000000003", "A3", "Alpha");
+    upsertBook("B000000002", { author: "A2", title: "Zebra" });
+    upsertBook("B000000003", { author: "A3", title: "Alpha" });
     const all = getAllBooks();
     assert.deepEqual(all.map((b) => b.asin), ["B000000001", "B000000003", "B000000002"]);
+  });
+});
+
+describe("upsertBook metadata", () => {
+  it("stores and returns the full metadata set", () => {
+    upsertBook("B0934Y5S4Y", {
+      author: "Matt Dinniman",
+      title: "Carl's Doomsday Scenario",
+      narrators: "Jeff Hays",
+      releaseDate: "2021-04-22",
+      addedToLibraryDate: "2026-08-30T18:01:12.447Z",
+      runtimeMinutes: 688,
+      language: "english",
+      formatType: "unabridged",
+      seriesTitle: "Dungeon Crawler Carl",
+      seriesSequence: "2",
+    });
+    const book = getAudiobookByAsin("B0934Y5S4Y");
+    assert.ok(book);
+    assert.equal(book.narrators, "Jeff Hays");
+    assert.equal(book.released_at, "2021-04-22");
+    assert.equal(book.added_to_library_at, "2026-08-30T18:01:12.447Z");
+    assert.equal(book.runtime_minutes, 688);
+    assert.equal(book.language, "english");
+    assert.equal(book.format_type, "unabridged");
+    assert.equal(book.series_title, "Dungeon Crawler Carl");
+    assert.equal(book.series_sequence, "2");
+  });
+
+  it("leaves metadata fields null when not provided", () => {
+    upsertBook("B000000001", { author: "A", title: "T" });
+    const book = getAudiobookByAsin("B000000001");
+    assert.equal(book?.narrators, null);
+    assert.equal(book?.series_title, null);
+    assert.equal(book?.runtime_minutes, null);
+  });
+
+  it("updates metadata on conflict, same as author/title", () => {
+    upsertBook("B000000001", { author: "A", title: "T", runtimeMinutes: 100 });
+    upsertBook("B000000001", { author: "A", title: "T", runtimeMinutes: 200 });
+    const book = getAudiobookByAsin("B000000001");
+    assert.equal(book?.runtime_minutes, 200);
   });
 });
 

@@ -56,7 +56,13 @@ elif command == "library":
     emit({
         "type": "done", "ok": True,
         "items": [
-            {"asin": "B0FAKE00001", "title": "Fake Book", "authors": "Fake Author", "downloadable": True},
+            {
+                "asin": "B0FAKE00001", "title": "Fake Book", "authors": "Fake Author",
+                "downloadable": True, "narrators": "Fake Narrator",
+                "releaseDate": "2021-04-22", "addedToLibraryDate": "2026-08-30T18:01:12.447Z",
+                "runtimeMinutes": 688, "language": "english", "formatType": "unabridged",
+                "seriesTitle": "Fake Series", "seriesSequence": "2",
+            },
             {"asin": "B0FAKE00002", "title": "Fake Podcast", "authors": "Someone", "downloadable": False},
         ],
     })

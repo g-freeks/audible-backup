@@ -67,7 +67,7 @@ describe("GET /", () => {
   });
 
   it("shows not-downloaded books with status badge", async () => {
-    upsertBook("B000000001", "Author One", "Undownloaded Book");
+    upsertBook("B000000001", { author: "Author One", title: "Undownloaded Book" });
     const res = await app.request("/");
     const html = await res.text();
     assert.ok(html.includes("Not Downloaded"));
@@ -77,7 +77,7 @@ describe("GET /", () => {
   });
 
   it("shows checkboxes for not-downloaded books", async () => {
-    upsertBook("B000000001", "A1", "T1");
+    upsertBook("B000000001", { author: "A1", title: "T1" });
     const res = await app.request("/");
     const html = await res.text();
     assert.ok(html.includes('name="asin"'));
@@ -86,7 +86,7 @@ describe("GET /", () => {
   });
 
   it("shows download buttons when not-downloaded books exist", async () => {
-    upsertBook("B000000001", "A1", "T1");
+    upsertBook("B000000001", { author: "A1", title: "T1" });
     const res = await app.request("/");
     const html = await res.text();
     assert.ok(html.includes("Fetch Selected"));
@@ -94,7 +94,7 @@ describe("GET /", () => {
   });
 
   it("shows both downloaded and not-downloaded books", async () => {
-    upsertBook("B000000001", "A1", "Not Yet");
+    upsertBook("B000000001", { author: "A1", title: "Not Yet" });
     markDownloaded("B000000002", "A2", "Already Got", "/b.aax");
     const res = await app.request("/");
     const html = await res.text();
@@ -114,7 +114,7 @@ describe("GET /", () => {
   });
 
   it("shows ignore buttons for non-ignored not-downloaded books", async () => {
-    upsertBook("B000000001", "A1", "T1");
+    upsertBook("B000000001", { author: "A1", title: "T1" });
     const res = await app.request("/");
     const html = await res.text();
     assert.ok(html.includes("/api/ignore/B000000001"));
@@ -345,7 +345,7 @@ describe("POST /api/delete/:asin", () => {
 
 describe("POST /library/download", () => {
   it("returns 409 when an operation is already running", async () => {
-    upsertBook("B000000001", "A1", "T1");
+    upsertBook("B000000001", { author: "A1", title: "T1" });
     // Hold an operation open explicitly. Racing two requests would depend on
     // the first one being slow, which it no longer is.
     startOperation("sync");
@@ -361,7 +361,7 @@ describe("POST /library/download", () => {
   });
 
   it("returns SSE panel HTML with download stream and OOB queued status", async () => {
-    upsertBook("B000000001", "A1", "T1");
+    upsertBook("B000000001", { author: "A1", title: "T1" });
     const res = await app.request("/library/download", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -452,7 +452,7 @@ describe("ASIN validation", () => {
   });
 
   it("still accepts a valid ASIN on ignore", async () => {
-    upsertBook("B000000009", "Author", "Title");
+    upsertBook("B000000009", { author: "Author", title: "Title" });
     const res = await app.request("/api/ignore/B000000009", {
       method: "POST",
       redirect: "manual",
@@ -480,7 +480,7 @@ describe("download endpoints", () => {
   });
 
   it("404s for converted download when book is not converted", async () => {
-    upsertBook("B00DOWNLD2", "Author", "Unconverted");
+    upsertBook("B00DOWNLD2", { author: "Author", title: "Unconverted" });
     const res = await app.request("/download/converted/B00DOWNLD2");
     assert.equal(res.status, 404);
   });
@@ -908,7 +908,7 @@ describe("POST /open-output", () => {
 
 describe("row actions are unambiguous", () => {
   it("uses one Get MP3s action for every un-converted state", async () => {
-    upsertBook("B0STATE0001", "A", "Not downloaded yet");
+    upsertBook("B0STATE0001", { author: "A", title: "Not downloaded yet" });
     markDownloaded("B0STATE0002", "A", "Downloaded only", "/x.aaxc");
     const html = await (await app.request("/")).text();
 

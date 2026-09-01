@@ -269,10 +269,12 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       flex-direction: column;
       height: calc(100vh - 4rem);
     }
-    /* A long author must not stretch the column and squeeze everything else;
-       the full value stays available through the cell's title attribute. */
+    /* A long value must not stretch its column and squeeze everything else
+       (more of a risk now that the table has many metadata columns); the
+       full value stays available through the cell's title attribute. */
     .col-author { max-width: 16rem; }
-    td.col-author {
+    .col-title { max-width: 20rem; }
+    td.col-author, td.col-title {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;

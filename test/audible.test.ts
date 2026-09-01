@@ -14,6 +14,7 @@ import {
 } from "../src/audible/login.ts";
 import { signRequest, signatureDate, Authenticator } from "../src/audible/auth.ts";
 import { decryptVoucher } from "../src/audible/client.ts";
+import { mapLibraryItem } from "../src/audible/commands.ts";
 
 /**
  * The TypeScript Audible client is a port of the `audible` Python package, and
@@ -210,5 +211,76 @@ describe("licence voucher, against the Python implementation", () => {
         /Failed to parse the licence voucher/,
       );
     }
+  });
+});
+
+describe("mapLibraryItem", () => {
+  it("returns null for an item with no asin", () => {
+    assert.equal(mapLibraryItem({}), null);
+  });
+
+  it("shapes a full item into the flat form the rest of the app expects", () => {
+    // Shape verified against a real account's /1.0/library response.
+    const mapped = mapLibraryItem({
+      asin: "B0934Y5S4Y",
+      title: "Carl's Doomsday Scenario",
+      authors: [{ name: "Matt Dinniman" }],
+      narrators: [{ name: "Jeff Hays" }],
+      content_delivery_type: "SinglePartBook",
+      release_date: "2021-04-22",
+      purchase_date: "2026-08-30T18:01:12.447Z",
+      runtime_length_min: 688,
+      language: "english",
+      format_type: "unabridged",
+      series: [{ title: "Dungeon Crawler Carl", sequence: "2" }],
+    });
+    assert.deepEqual(mapped, {
+      asin: "B0934Y5S4Y",
+      title: "Carl's Doomsday Scenario",
+      authors: "Matt Dinniman",
+      narrators: "Jeff Hays",
+      downloadable: true,
+      releaseDate: "2021-04-22",
+      addedToLibraryDate: "2026-08-30T18:01:12.447Z",
+      runtimeMinutes: 688,
+      language: "english",
+      formatType: "unabridged",
+      seriesTitle: "Dungeon Crawler Carl",
+      seriesSequence: "2",
+    });
+  });
+
+  it("marks podcasts and periodicals as not downloadable", () => {
+    const mapped = mapLibraryItem({ asin: "B1", content_delivery_type: "PodcastParent" });
+    assert.equal(mapped?.downloadable, false);
+  });
+
+  it("prefers the series entry that has a sequence number", () => {
+    // "Oathbringer" is in both the umbrella "The Cosmere" series (no
+    // sequence) and the numbered "The Stormlight Archive" series — verified
+    // against a real account. The numbered one is the useful one to sort by.
+    const mapped = mapLibraryItem({
+      asin: "B077G7YL2R",
+      series: [
+        { title: "The Cosmere", sequence: "" },
+        { title: "The Stormlight Archive", sequence: "3" },
+      ],
+    });
+    assert.equal(mapped?.seriesTitle, "The Stormlight Archive");
+    assert.equal(mapped?.seriesSequence, "3");
+  });
+
+  it("falls back to the first series entry when none has a sequence", () => {
+    const mapped = mapLibraryItem({
+      asin: "B1",
+      series: [{ title: "Some Series", sequence: "" }],
+    });
+    assert.equal(mapped?.seriesTitle, "Some Series");
+  });
+
+  it("leaves series fields undefined when the item has none", () => {
+    const mapped = mapLibraryItem({ asin: "B1" });
+    assert.equal(mapped?.seriesTitle, undefined);
+    assert.equal(mapped?.seriesSequence, undefined);
   });
 });
