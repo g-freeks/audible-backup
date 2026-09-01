@@ -64,11 +64,9 @@ describe("flatpak manifest", () => {
     assert.ok(!args.includes("--share=home"), "must not request the home directory");
   });
 
-  it("references generated modules that exist and parse", () => {
-    for (const file of ["python3-audible.json", "node-modules.json"]) {
-      assert.match(manifest, new RegExp(`- ${file.replace(/\./g, "\\.")}`));
-      assert.ok(readModule(file).name, `${file} is not a module`);
-    }
+  it("references a generated module that exists and parses", () => {
+    assert.match(manifest, /- node-modules\.json/);
+    assert.ok(readModule("node-modules.json").name, "node-modules.json is not a module");
   });
 
   it("installs everything the desktop shell goes looking for", () => {
@@ -119,7 +117,7 @@ describe("generated npm sources", () => {
     assert.deepEqual(
       module.sources.map((s: any) => s.dest).sort(),
       production.map(([name]) => name).sort(),
-      "regenerate with scripts/generate-flatpak-sources.py",
+      "regenerate with scripts/generate-flatpak-sources.mjs",
     );
   });
 
@@ -136,52 +134,27 @@ describe("generated npm sources", () => {
   });
 });
 
-describe("generated python sources", () => {
-  const module = readModule("python3-audible.json");
-  const requirements = fs
-    .readFileSync(path.join(FLATPAK, "python-requirements.txt"), "utf8")
-    .split("\n")
-    .filter((line) => line && !line.startsWith("#"));
-
-  it("pins every distribution to PyPI with a checksum", () => {
-    assert.ok(module.sources.length > 0);
-    for (const source of module.sources) {
-      assert.match(source.url, /^https:\/\/files\.pythonhosted\.org\//, source.url);
-      assert.match(source.sha256, /^[0-9a-f]{64}$/, `${source.url}: bad sha256`);
-    }
+describe("no Python in the build", () => {
+  it("declares no Python module and no PYTHONPATH", () => {
+    // The Audible client is TypeScript now. A stray PYTHONPATH or a
+    // resurrected python module would mean the runtime dependency crept back.
+    assert.ok(!manifest.includes("PYTHONPATH"), "no PYTHONPATH is needed");
+    assert.ok(!manifest.includes("python3-audible"), "no Python module");
+    assert.ok(!fs.existsSync(path.join(FLATPAK, "python3-audible.json")));
+    assert.ok(!fs.existsSync(path.join(FLATPAK, "python-requirements.txt")));
   });
 
-  it("installs exactly the pinned requirements", () => {
-    const install = module["build-commands"].at(-1) as string;
-    assert.match(install, /--no-index/, "the build has no network");
-    assert.match(install, /--target=\/app\/lib\/audible-python/);
-    for (const requirement of requirements) {
-      assert.ok(install.includes(requirement), `${requirement} is not installed`);
-    }
+  it("does not ship the Python helper", () => {
+    // It stays in the repository as an escape hatch for server installs, but
+    // without its dependencies it could only fail inside the sandbox.
+    const skip = manifest.slice(manifest.indexOf("skip:"));
+    assert.match(skip, /- helper$/m);
+    assert.ok(!/cp -r [^\n]*\bhelper\b/.test(manifest), "helper is not copied into /app");
   });
 
-  it("puts the install directory on PYTHONPATH", () => {
-    // --target installs outside the interpreter's default search path, so
-    // without this the helper would import nothing.
-    assert.match(manifest, /--env=PYTHONPATH=\/app\/lib\/audible-python/);
-  });
-
-  it("covers every architecture for compiled wheels", () => {
-    const arches = new Set<string>();
-    for (const source of module.sources) {
-      for (const arch of source["only-arches"] ?? []) arches.add(arch);
-    }
-    // Pillow is the only compiled dependency today; if it is pinned for one
-    // architecture it must be pinned for both, or that build silently loses it.
-    if (arches.size > 0) {
-      assert.deepEqual([...arches].sort(), ["aarch64", "x86_64"]);
-    }
-  });
-
-  it("vendors the build backend rather than trusting the SDK's", () => {
-    const [bootstrap] = module["build-commands"] as string[];
-    assert.match(bootstrap, /setuptools==/, "setuptools must be pinned");
-    assert.match(bootstrap, /--target="\$\{PWD\}\/_buildtools"/, "keep it out of /app");
+  it("checks in the smoke test that Python really is gone", () => {
+    const smoke = fs.readFileSync(path.join(FLATPAK, "smoke-test.sh"), "utf8");
+    assert.match(smoke, /audible-python/, "the sandbox check must still run");
   });
 });
 

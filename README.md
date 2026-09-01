@@ -113,14 +113,19 @@ service.
 
 ## AAXC support
 
-Downloads use a small Python helper (`helper/audible_helper.py`, built on the
-[`audible`](https://github.com/mkb79/Audible) package that ships with
-audible-cli) which fetches the license voucher and downloads books in AAXC
-format — including titles that are AAXC-only on newer Audible accounts.
-Conversion decrypts AAXC with the per-file voucher key/iv, so
-**activation bytes are only needed for legacy `.aax` files**. If the helper's
-Python dependency is unavailable, the app falls back to downloading AAX via
-audible-cli as before. Signing in via `audible quickstart` covers both paths.
+Signing in, listing the library and downloading are handled by a built-in
+Audible client (`src/audible/`) written in TypeScript — **no Python needed**.
+It fetches the licence voucher and downloads books in AAXC format, including
+titles that are AAXC-only on newer Audible accounts. Conversion decrypts AAXC
+with the per-file voucher key/iv, so **activation bytes are only needed for
+legacy `.aax` files**.
+
+The client is a port of the [`audible`](https://github.com/mkb79/Audible)
+Python package, and is tested against vectors that package generated, so the
+PKCE sign-in, the signed API requests and the voucher decryption provably
+agree with it. The original Python helper is still in the repository: set
+`AUDIBLE_HELPER="python3 helper/audible_helper.py"` to use it instead, if you
+have the `audible` package installed.
 
 ## Limitations
 

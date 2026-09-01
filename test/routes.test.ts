@@ -16,7 +16,7 @@ import {
   deleteBook,
   getAudiobookByAsin,
 } from "../src/db.ts";
-import { clearOperation } from "../src/operations.ts";
+import { clearOperation, startOperation } from "../src/operations.ts";
 
 let tmpDir: string;
 let app: Hono;
@@ -345,12 +345,9 @@ describe("POST /api/delete/:asin", () => {
 describe("POST /library/download", () => {
   it("returns 409 when an operation is already running", async () => {
     upsertBook("B000000001", "A1", "T1");
-    const res1 = await app.request("/library/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "asin=B000000001",
-    });
-    assert.equal(res1.status, 200);
+    // Hold an operation open explicitly. Racing two requests would depend on
+    // the first one being slow, which it no longer is.
+    startOperation("sync");
 
     const res2 = await app.request("/library/download", {
       method: "POST",
@@ -891,7 +888,7 @@ describe("POST /prepare/:asin", () => {
   });
 
   it("refuses to start while another operation runs", async () => {
-    await app.request("/prepare/B0PREPARE1", { method: "POST" });
+    startOperation("sync");
     const res = await app.request("/prepare/B0PREPARE2", { method: "POST" });
     assert.equal(res.status, 409);
   });
@@ -992,7 +989,7 @@ describe("POST /user/reset-db", () => {
 
   it("refuses while an operation is running", async () => {
     const cookie = await signedIn("alice");
-    await app.request("/library/sync", { method: "POST", headers: { cookie } });
+    startOperation("sync");
     const res = await app.request("/user/reset-db", { method: "POST", headers: { cookie } });
     assert.equal(res.status, 400);
     assert.match(await res.text(), /operation is running/i);

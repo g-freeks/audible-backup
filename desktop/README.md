@@ -55,11 +55,11 @@ flatpak-builder --user --install --force-clean build \
 flatpak run io.github.g_freeks.audible_backup
 ```
 
-Its dependency modules are generated and committed — regenerate them after
-changing `package-lock.json` or the pinned `audible` version:
+Its dependency module is generated and committed — regenerate it after
+changing `package-lock.json`:
 
 ```bash
-python3 scripts/generate-flatpak-sources.py
+node scripts/generate-flatpak-sources.mjs
 ```
 
 `test/flatpak.test.ts` fails if the generated files fall behind the lockfile,
@@ -72,7 +72,8 @@ flatpak/smoke-test.sh
 ```
 
 It verifies the things only a real sandbox can answer — that the runtime's
-ffmpeg has libmp3lame and an aac decoder, that the vendored Python packages
-import under the runtime's interpreter, that gjs resolves GTK 4.0 and
-WebKit 6.0, and that the app serves while still refusing requests that carry
-no token. CI runs the same script on every change that can affect the bundle.
+ffmpeg has libmp3lame and an aac decoder, that the Audible client loads under
+the bundled Node, that no Python is left in the bundle, that gjs resolves
+GTK 4.0 and WebKit 6.0, and that the app serves while still refusing requests
+that carry no token. CI runs the same script on every change that can affect
+the bundle.
