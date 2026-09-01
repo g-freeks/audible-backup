@@ -73,13 +73,214 @@
     });
   }
 
+  // ---- Column visibility + order ----
+  // Cached in localStorage for instant, no-flash reapplication on every
+  // table refresh, but the account (when there is one) is the durable
+  // source of truth — the desktop app binds to a fresh OS-assigned port on
+  // every launch, so localStorage alone would reset on every restart. On
+  // load, seedColumnPrefsFromServer() overwrites the local cache with
+  // whatever the page's initial render says the account has saved; every
+  // change after that updates the cache immediately and re-saves to the
+  // account in the background.
+  var COLUMN_PREFS_KEY = "audible-backup:hidden-columns";
+
+  function getHiddenColumns() {
+    try {
+      return JSON.parse(localStorage.getItem(COLUMN_PREFS_KEY) || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function setHiddenColumns(cols) {
+    try {
+      localStorage.setItem(COLUMN_PREFS_KEY, JSON.stringify(cols));
+    } catch (e) {
+      // Private browsing / storage disabled — the toggle still works this load.
+    }
+  }
+
+  /** Hiding a column via its <col> element is not reliably honored by
+   * browsers for the cells within it, so every th/td carrying that column's
+   * data-col is toggled directly instead. */
+  function applyColumnPrefs() {
+    var hidden = getHiddenColumns();
+    document.querySelectorAll("#books-table [data-col]").forEach(function (cell) {
+      cell.style.display = hidden.indexOf(cell.dataset.col) !== -1 ? "none" : "";
+    });
+    document.querySelectorAll("[data-col-toggle]").forEach(function (cb) {
+      cb.checked = hidden.indexOf(cb.dataset.colToggle) === -1;
+    });
+  }
+
+  function toggleColumn(key, visible) {
+    var hidden = getHiddenColumns();
+    var idx = hidden.indexOf(key);
+    if (visible && idx !== -1) hidden.splice(idx, 1);
+    if (!visible && idx === -1) hidden.push(key);
+    setHiddenColumns(hidden);
+    applyColumnPrefs();
+    persistColumnPrefsToServer();
+  }
+
+  /** Fire-and-forget: keeps the account's saved prefs in sync with whatever
+   * is now in localStorage. No-ops server-side in legacy mode (no account to
+   * attach it to) — localStorage alone is fine there, since that deployment
+   * has a stable origin. */
+  function persistColumnPrefsToServer() {
+    fetch("/api/column-prefs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden: getHiddenColumns(), order: getColumnOrder() }),
+    }).catch(function () {});
+  }
+
+  /** Runs once on page load: the server rendered this account's saved
+   * column prefs (if any) into #column-prefs-data. Only overwrite the local
+   * cache when the account actually has something saved, so a browser-only
+   * choice made before this account had ever saved one isn't stomped on. */
+  function seedColumnPrefsFromServer() {
+    var el = document.getElementById("column-prefs-data");
+    if (!el) return;
+    var hidden = el.dataset.hidden ? el.dataset.hidden.split(",").filter(Boolean) : [];
+    var order = el.dataset.order ? el.dataset.order.split(",").filter(Boolean) : [];
+    if (hidden.length) setHiddenColumns(hidden);
+    if (order.length) setColumnOrder(order);
+  }
+
+  // ---- Column order (drag the header cells to reorder) ----
+  var COLUMN_ORDER_KEY = "audible-backup:column-order";
+
+  /** The column keys in the order the server rendered them — the starting
+   * point before any saved preference or drag is applied. */
+  function defaultColumnOrder() {
+    return Array.prototype.map.call(
+      document.querySelectorAll("#books-table thead th[data-col]"),
+      function (th) { return th.dataset.col; },
+    );
+  }
+
+  /** Saved order, but reconciled against the columns that actually exist:
+   * unknown (stale) keys are dropped, and any column the saved order doesn't
+   * mention (new since the preference was saved) is appended at the end. */
+  function getColumnOrder() {
+    var saved = [];
+    try {
+      saved = JSON.parse(localStorage.getItem(COLUMN_ORDER_KEY) || "[]");
+    } catch (e) {
+      // fall through with an empty saved order
+    }
+    var natural = defaultColumnOrder();
+    var known = saved.filter(function (key) { return natural.indexOf(key) !== -1; });
+    var missing = natural.filter(function (key) { return known.indexOf(key) === -1; });
+    return known.concat(missing);
+  }
+
+  function setColumnOrder(order) {
+    try {
+      localStorage.setItem(COLUMN_ORDER_KEY, JSON.stringify(order));
+    } catch (e) {
+      // Private browsing / storage disabled — the reorder still works this load.
+    }
+  }
+
+  /** Moves every row's data-col cells (header and body alike) to match
+   * `order`, keeping the fixed checkbox column first and Actions column last
+   * — those two never move and never appear in `order`. */
+  function applyColumnOrder() {
+    var order = getColumnOrder();
+    var table = document.getElementById("books-table");
+    if (!table || !order.length) return;
+
+    var sections = [table.tHead].concat(Array.prototype.slice.call(table.tBodies));
+    sections.forEach(function (section) {
+      if (!section) return;
+      Array.prototype.forEach.call(section.rows, function (row) {
+        var byKey = {};
+        Array.prototype.forEach.call(row.children, function (cell) {
+          if (cell.dataset.col) byKey[cell.dataset.col] = cell;
+        });
+        // Actions is the last child and carries no data-col, so it stays put
+        // as the anchor every dragged cell gets reinserted in front of.
+        var anchor = row.lastElementChild;
+        order.forEach(function (key) {
+          var cell = byKey[key];
+          if (cell) row.insertBefore(cell, anchor);
+        });
+      });
+    });
+  }
+
+  var dragSrcKey = null;
+
+  document.addEventListener("dragstart", function (e) {
+    var th = e.target.closest("#books-table thead th[data-col]");
+    if (!th) return;
+    dragSrcKey = th.dataset.col;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragSrcKey);
+    th.classList.add("dragging");
+  });
+
+  document.addEventListener("dragend", function (e) {
+    var th = e.target.closest("#books-table thead th[data-col]");
+    if (th) th.classList.remove("dragging");
+    document.querySelectorAll("#books-table thead th.drag-over").forEach(function (el) {
+      el.classList.remove("drag-over");
+    });
+    dragSrcKey = null;
+  });
+
+  document.addEventListener("dragover", function (e) {
+    if (!dragSrcKey) return;
+    var th = e.target.closest("#books-table thead th[data-col]");
+    if (!th) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (th.dataset.col !== dragSrcKey) th.classList.add("drag-over");
+  });
+
+  document.addEventListener("dragleave", function (e) {
+    var th = e.target.closest("#books-table thead th[data-col]");
+    if (th) th.classList.remove("drag-over");
+  });
+
+  document.addEventListener("drop", function (e) {
+    if (!dragSrcKey) return;
+    var th = e.target.closest("#books-table thead th[data-col]");
+    if (!th) return;
+    e.preventDefault();
+    th.classList.remove("drag-over");
+    var targetKey = th.dataset.col;
+    if (targetKey === dragSrcKey) return;
+
+    var order = getColumnOrder();
+    var from = order.indexOf(dragSrcKey);
+    var to = order.indexOf(targetKey);
+    if (from === -1 || to === -1) return;
+    order.splice(from, 1);
+    order.splice(to, 0, dragSrcKey);
+    setColumnOrder(order);
+    applyColumnOrder();
+    persistColumnPrefsToServer();
+  });
+
+  // ---- Download Selected: only actionable once something is checked ----
+  function updateDownloadSelectedState() {
+    var btn = document.getElementById("download-selected-btn");
+    if (!btn || btn.hasAttribute("data-cancel")) return;
+    btn.disabled = !document.querySelector('input[name="asin"]:checked');
+  }
+
   var statusOrder = {
     "not-downloaded": 0, "not-downloadable": 1, "convertible": 2,
     "downloaded": 3, "converted": 4, "ignored": 5,
   };
 
   function sortBy(th) {
-    var col = parseInt(th.dataset.sortCol, 10);
+    // The cell's live position, not a value baked in at render time — columns
+    // can be dragged to a new position, and this stays correct either way.
+    var col = th.cellIndex;
     var type = th.dataset.sortType;
     var dir = th.classList.contains("asc") ? "desc" : "asc";
 
@@ -213,6 +414,15 @@
           if (cb) cb.checked = e.target.checked;
         }
       });
+      updateDownloadSelectedState();
+      return;
+    }
+    if (e.target.name === "asin") {
+      updateDownloadSelectedState();
+      return;
+    }
+    if (e.target.dataset.colToggle) {
+      toggleColumn(e.target.dataset.colToggle, e.target.checked);
     }
   });
 
@@ -259,24 +469,42 @@
       if (button === activeTrigger) return;
       button.disabled = running;
     });
+    // The blanket re-enable above ignores selection state — reassert it.
+    updateDownloadSelectedState();
 
     if (!activeTrigger) return;
+    // An icon-only button (e.g. Sync Library) keeps its icon rather than
+    // losing it to the word "Cancel" — CSS spins the icon in place while
+    // [data-cancel] is set, and swaps it for a red X on hover. Only its
+    // accessible name changes, so screen readers still hear "cancel".
+    var iconOnly = activeTrigger.classList.contains("btn-icon");
     if (running) {
-      if (!activeTrigger.dataset.originalLabel) {
-        activeTrigger.dataset.originalLabel = activeTrigger.innerHTML;
-      }
-      activeTrigger.innerHTML = "Cancel";
-      activeTrigger.classList.add("btn-danger");
       activeTrigger.setAttribute("data-cancel", "true");
       activeTrigger.disabled = false;
+      if (iconOnly) {
+        if (activeTrigger.dataset.originalAriaLabel === undefined) {
+          activeTrigger.dataset.originalAriaLabel = activeTrigger.getAttribute("aria-label") || "";
+        }
+        activeTrigger.setAttribute("aria-label", "Cancel " + activeTrigger.dataset.originalAriaLabel.toLowerCase());
+      } else {
+        if (!activeTrigger.dataset.originalLabel) {
+          activeTrigger.dataset.originalLabel = activeTrigger.innerHTML;
+        }
+        activeTrigger.innerHTML = "Cancel";
+        activeTrigger.classList.add("btn-danger");
+      }
     } else {
+      activeTrigger.removeAttribute("data-cancel");
+      activeTrigger.disabled = false;
+      if (activeTrigger.dataset.originalAriaLabel !== undefined) {
+        activeTrigger.setAttribute("aria-label", activeTrigger.dataset.originalAriaLabel);
+        delete activeTrigger.dataset.originalAriaLabel;
+      }
       if (activeTrigger.dataset.originalLabel) {
         activeTrigger.innerHTML = activeTrigger.dataset.originalLabel;
         delete activeTrigger.dataset.originalLabel;
       }
       activeTrigger.classList.remove("btn-danger");
-      activeTrigger.removeAttribute("data-cancel");
-      activeTrigger.disabled = false;
       activeTrigger = null;
     }
   }
@@ -319,22 +547,27 @@
     document.body.dispatchEvent(new CustomEvent("refresh-books"));
   });
 
-  // Preserve the search box across table refreshes.
-  var savedSearch = "";
-  document.body.addEventListener("htmx:beforeSwap", function () {
-    var input = document.getElementById("search-input");
-    if (input) savedSearch = input.value;
-  });
+  // The search box and Download Selected button live in the topbar, outside
+  // the swapped `.library-layout`, so the search box survives a books-table
+  // refresh on its own — it just needs its filter (and the fresh rows'
+  // column visibility and selection state) reapplied.
   document.body.addEventListener("htmx:afterSwap", function () {
-    var input = document.getElementById("search-input");
-    if (input && savedSearch) {
-      input.value = savedSearch;
-      applyFilters();
-    }
+    applyFilters();
+    applyColumnPrefs();
+    applyColumnOrder();
+    updateDownloadSelectedState();
     if (document.body.classList.contains("op-running")) {
       document.querySelectorAll("button[hx-post]").forEach(function (button) {
         if (button !== activeTrigger) button.disabled = true;
       });
     }
   });
+
+  // Initial page load: sync the local cache from the account's saved prefs
+  // (if any), apply them, and set up the (unchecked) selection state — the
+  // server always renders every column shown, in its default order.
+  seedColumnPrefsFromServer();
+  applyColumnPrefs();
+  applyColumnOrder();
+  updateDownloadSelectedState();
 })();

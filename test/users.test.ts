@@ -14,6 +14,7 @@ import {
   userDirs,
   runWithUser,
   currentUserName,
+  setColumnPrefs,
 } from "../src/users.ts";
 import { closeDb, markDownloaded, getAllAudiobooks } from "../src/db.ts";
 
@@ -114,5 +115,33 @@ describe("per-user database isolation", () => {
     });
     assert.equal(name, "async-user");
     assert.equal(currentUserName(), undefined);
+  });
+});
+
+describe("column prefs", () => {
+  it("saves and reads back a user's books-table column choices", () => {
+    addUser("alice");
+    assert.equal(getUser("alice")?.columnPrefs, undefined, "nothing saved yet");
+
+    setColumnPrefs("alice", { hidden: ["asin", "format"], order: ["title", "author"] });
+    assert.deepEqual(getUser("alice")?.columnPrefs, {
+      hidden: ["asin", "format"],
+      order: ["title", "author"],
+    });
+  });
+
+  it("survives the same round trip a fresh process would see (persisted to disk)", () => {
+    addUser("alice");
+    setColumnPrefs("alice", { hidden: ["asin"], order: [] });
+    // listUsers() re-reads users.json from disk rather than any in-memory
+    // cache, so this stands in for "the app restarted".
+    assert.deepEqual(listUsers().find((u) => u.name === "alice")?.columnPrefs, {
+      hidden: ["asin"],
+      order: [],
+    });
+  });
+
+  it("rejects an unknown user", () => {
+    assert.throws(() => setColumnPrefs("nobody", { hidden: [], order: [] }), /Unknown user/);
   });
 });

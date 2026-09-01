@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import {
   startUi,
   seedBooks,
@@ -62,6 +63,193 @@ describe("library page in a browser", () => {
     assert.equal(await header.getAttribute("aria-sort"), "descending");
   });
 
+  it("reorders columns by dragging a header, and remembers the choice", async () => {
+    // th text renders upper-cased via CSS (text-transform), so innerText()
+    // reflects that rather than the raw "Title"/"Series" — normalize it away.
+    const headerText = async () => {
+      const ths = await ui.page.locator("#books-table thead th").allInnerTexts();
+      return ths.map((t) => t.trim().toLowerCase());
+    };
+    assert.deepEqual((await headerText()).slice(0, 3), ["", "title", "series"]);
+
+    const asinHeader = ui.page.locator('#books-table thead th[data-col="asin"]');
+    const titleHeader = ui.page.locator('#books-table thead th[data-col="title"]');
+    await asinHeader.dragTo(titleHeader);
+
+    const reordered = await headerText();
+    assert.equal(reordered[1], "asin", "ASIN dropped in front of Title");
+    assert.equal(reordered[2], "title");
+
+    // Body cells followed the header move, so each row's data stays aligned.
+    const secondCell = ui.page.locator("#books-table tbody tr").first().locator("td").nth(1);
+    assert.equal(await secondCell.locator("code").count(), 1, "the ASIN cell (wrapped in <code>) moved with its header");
+
+    // Sorting still targets the right column after reordering (cellIndex-based).
+    await ui.page.locator('#books-table thead th:has-text("Title")').click();
+    const titles = await ui.page.locator("#books-table tbody td.col-title").allInnerTexts();
+    assert.deepEqual([...titles].sort(), titles, "still sorts by title, not whatever is now at its old index");
+
+    // Preference survives a table refresh.
+    await ui.page.click('button[hx-post="/library/sync"]');
+    await ui.page.waitForFunction(
+      () => (document.querySelector("#progress-panel")?.children.length || 0) > 0,
+      { timeout: 10000 },
+    );
+    await ui.page.waitForFunction(
+      () => !document.body.classList.contains("op-running"),
+      { timeout: 10000 },
+    );
+    assert.equal((await headerText())[1], "asin", "order persists across a table refresh");
+
+    // Reset for any tests that run after this one in the same worker —
+    // simpler and more robust than reversing the drag step by step.
+    await ui.page.evaluate(() => localStorage.removeItem("audible-backup:column-order"));
+    await ui.page.reload({ waitUntil: "networkidle" });
+    assert.deepEqual((await headerText()).slice(0, 3), ["", "title", "series"]);
+  });
+
+  it("hides and re-shows a column from the Columns menu, and remembers the choice", async () => {
+    await ui.page.click('button:has-text("Columns")');
+    const asinToggle = ui.page.locator('input[data-col-toggle="asin"]');
+    assert.equal(await asinToggle.isChecked(), true);
+
+    const asinHeader = ui.page.locator('#books-table thead th[data-col="asin"]');
+    const asinCell = ui.page.locator('#books-table tbody td[data-col="asin"]').first();
+    assert.equal(await asinHeader.isVisible(), true);
+    assert.equal(await asinCell.isVisible(), true);
+
+    await asinToggle.uncheck({ force: true });
+    assert.equal(await asinHeader.isVisible(), false, "header cell actually hides, not just its <col>");
+    assert.equal(await asinCell.isVisible(), false, "body cells actually hide, not just their <col>");
+
+    // Preference survives a books-table refresh.
+    await ui.page.click('button[hx-post="/library/sync"]');
+    await ui.page.waitForFunction(
+      () => (document.querySelector("#progress-panel")?.children.length || 0) > 0,
+      { timeout: 10000 },
+    );
+    await ui.page.waitForFunction(
+      () => !document.body.classList.contains("op-running"),
+      { timeout: 10000 },
+    );
+    assert.equal(
+      await asinHeader.isVisible(),
+      false,
+      "hidden column stays hidden across a table refresh",
+    );
+
+    // Re-show it for any tests that run after this one in the same worker.
+    await ui.page.click('button:has-text("Columns")');
+    await ui.page.locator('input[data-col-toggle="asin"]').check({ force: true });
+    assert.equal(await asinHeader.isVisible(), true);
+  });
+
+});
+
+describe("column prefs survive a wiped browser (e.g. the desktop app's port changing every launch)", () => {
+  let ui: UiContext;
+
+  /** Seeds one book directly into the given account's own per-user database,
+   * the same way seedBooks() does for the legacy (user-less) one — done
+   * before the server starts, since this runs in the test process. */
+  function seedUserBook(userName: string) {
+    return async (env: NodeJS.ProcessEnv) => {
+      const prevUsersDir = process.env.USERS_DIR;
+      const prevDbPath = process.env.DB_PATH;
+      process.env.USERS_DIR = env.USERS_DIR;
+      const users = await import("../../src/users.ts");
+      const db = await import("../../src/db.ts");
+      const dirs = users.userDirs(userName);
+      fs.mkdirSync(dirs.targetDir, { recursive: true });
+      process.env.DB_PATH = dirs.dbPath;
+      db.closeDb();
+      db.markDownloaded("B0PERSIST1", "Author", "Persisted Book", "/x/B0PERSIST1.aaxc");
+      db.closeDb();
+      process.env.DB_PATH = prevDbPath;
+      process.env.USERS_DIR = prevUsersDir;
+    };
+  }
+
+  before(async () => {
+    ui = await startUi(seedUserBook("alice"));
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("hides a column, then recovers it in a brand-new browser context signed into the same account", async () => {
+    await ui.page.click('button:has-text("Columns")');
+    await ui.page.click('input[data-col-toggle="asin"]');
+    // The save to the account is fire-and-forget; give it a moment to land.
+    await ui.page.waitForTimeout(200);
+
+    // A brand-new context has no cookies and no localStorage at all — this
+    // stands in for the desktop app's fresh OS-assigned port on relaunch.
+    const browser = ui.page.context().browser();
+    if (!browser) throw new Error("expected a browser instance");
+    const freshContext = await browser.newContext();
+    try {
+      const freshPage = await freshContext.newPage();
+      await freshPage.goto(`${ui.baseUrl}/login?user=alice`, { waitUntil: "networkidle" });
+
+      // Checked before switching users / loading the books page: this really
+      // is empty browser storage, not just an account with nothing hidden.
+      assert.equal(
+        await freshPage.evaluate(() => localStorage.getItem("audible-backup:hidden-columns")),
+        null,
+        "sanity check: this really is a fresh browser storage",
+      );
+
+      await freshPage.click('form[action="/user/switch"] button[type=submit]');
+      await freshPage.waitForLoadState("networkidle");
+
+      assert.equal(
+        await freshPage.locator('#books-table thead th[data-col="asin"]').isVisible(),
+        false,
+        "the saved-on-the-account preference applied without ever touching this browser's storage",
+      );
+    } finally {
+      await freshContext.close();
+    }
+  });
+});
+
+describe("Download Selected", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedBooks);
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("stays disabled until a book is checked, and disables again once cleared", async () => {
+    const btn = ui.page.locator("#download-selected-btn");
+    assert.equal(await btn.isDisabled(), true);
+
+    const checkbox = ui.page.locator('input[name="asin"]').first();
+    await checkbox.check();
+    assert.equal(await btn.isDisabled(), false);
+
+    await checkbox.uncheck();
+    assert.equal(await btn.isDisabled(), true);
+  });
+
+  it("becomes enabled when select-all checks the visible rows", async () => {
+    const btn = ui.page.locator("#download-selected-btn");
+    await ui.page.check("#select-all");
+    assert.equal(await btn.isDisabled(), false);
+    await ui.page.uncheck("#select-all");
+    assert.equal(await btn.isDisabled(), true);
+  });
 });
 
 describe("operation log", () => {
@@ -80,7 +268,7 @@ describe("operation log", () => {
     assert.equal(await ui.page.locator("#log-float").isVisible(), false);
     assert.equal(await ui.page.locator("#log-indicator").isVisible(), false);
 
-    await ui.page.click('button:has-text("Sync Library")');
+    await ui.page.click('button[hx-post="/library/sync"]');
     await ui.page.waitForFunction(
       () => (document.querySelector("#progress-panel")?.children.length || 0) > 0,
       { timeout: 10000 },
@@ -130,15 +318,16 @@ describe("operation log", () => {
     assert.equal(await ui.page.locator("#log-toggle").getAttribute("aria-expanded"), "false");
   });
 
-  it("shows Convert All output in the same panel", async () => {
+  it("shows Download All output in the same panel", async () => {
     await ui.page.reload({ waitUntil: "networkidle" });
-    await ui.page.click('button:has-text("Convert All")');
+    ui.page.once("dialog", (d) => d.accept());
+    await ui.page.click('button[hx-post="/library/download-all"]');
     await ui.page.click("#log-toggle");
     await ui.page.waitForFunction(
-      () => /Conversion started/.test(document.querySelector("#progress-panel")?.textContent || ""),
+      () => /Download started/.test(document.querySelector("#progress-panel")?.textContent || ""),
       { timeout: 10000 },
     );
-    assert.match(await ui.page.locator("#progress-panel").innerText(), /Conversion started/);
+    assert.match(await ui.page.locator("#progress-panel").innerText(), /Download started/);
   });
 });
 
@@ -159,8 +348,10 @@ describe("cancelling a running operation", () => {
     delete process.env.FAKE_HELPER_MODE;
   });
 
-  it("turns the trigger into Cancel and disables the other actions", async () => {
-    // Locate by attribute: the label deliberately changes to "Cancel".
+  it("spins the sync icon and swaps it for a cancel X on hover, instead of a text Cancel button", async () => {
+    // Sync Library is an icon-only button: it keeps its icon rather than
+    // losing it to the word "Cancel", and is marked cancelable via
+    // data-cancel plus its accessible name, not visible text.
     const sync = ui.page.locator('button[hx-post="/library/sync"]');
     await sync.click();
     await ui.page.waitForFunction(
@@ -168,16 +359,40 @@ describe("cancelling a running operation", () => {
       { timeout: 10000 },
     );
 
-    assert.match((await sync.innerText()).trim(), /Cancel/);
+    assert.equal(await sync.getAttribute("data-cancel"), "true");
     assert.equal(await sync.isEnabled(), true, "cancel must stay clickable");
+    assert.equal(await sync.getAttribute("aria-label"), "Cancel sync library");
 
-    const convertAll = ui.page.locator('button[hx-post="/convert/all"]');
-    assert.equal(await convertAll.isDisabled(), true, "other operations are blocked");
+    // The click above left the mouse resting on the button; move it away so
+    // the "not hovering yet" checks below aren't accidentally already hovering.
+    await ui.page.mouse.move(0, 0);
+
+    const refreshIcon = sync.locator(".icon-refresh");
+    const cancelIcon = sync.locator(".icon-cancel");
+    assert.equal(
+      await refreshIcon.evaluate((el) => getComputedStyle(el).animationName),
+      "spin",
+      "the refresh icon spins while running",
+    );
+    assert.equal(await cancelIcon.evaluate((el) => getComputedStyle(el).display), "none", "no X until hovered");
+
+    await sync.hover();
+    assert.equal(await refreshIcon.evaluate((el) => getComputedStyle(el).display), "none", "spinner hides on hover");
+    assert.equal(await cancelIcon.evaluate((el) => getComputedStyle(el).display), "block", "X shows on hover");
+    assert.equal(
+      await cancelIcon.evaluate((el) => getComputedStyle(el).color),
+      "rgb(224, 27, 36)",
+      "the cancel X reads as destructive (var(--danger))",
+    );
+
+    const downloadAll = ui.page.locator('button[hx-post="/library/download-all"]');
+    assert.equal(await downloadAll.isDisabled(), true, "other operations are blocked");
     const rowAction = ui.page.locator("#books-table button.split-main").first();
     assert.equal(await rowAction.isDisabled(), true, "row actions are blocked too");
   });
 
   it("stops the operation and restores the buttons", async () => {
+    // Clicking while hovered — showing the cancel X — is what actually cancels.
     await ui.page.locator("[data-cancel]").click();
     await ui.page.waitForFunction(
       () => !document.body.classList.contains("op-running"),
@@ -187,15 +402,15 @@ describe("cancelling a running operation", () => {
     await ui.page.click("#log-toggle");
     assert.match(await ui.page.locator("#progress-panel").innerText(), /Cancell?ed/i);
     assert.equal(
-      await ui.page.locator('button[hx-post="/convert/all"]').isDisabled(),
+      await ui.page.locator('button[hx-post="/library/download-all"]').isDisabled(),
       false,
       "buttons are usable again after cancelling",
     );
-    assert.match(
-      (await ui.page.locator('button[hx-post="/library/sync"]').innerText()).trim(),
-      /Sync Library/,
-      "the trigger goes back to its original label",
-    );
+    // The label reverts from "Cancel" back to the icon — verified by the
+    // absence of "Cancel" text plus its stable accessible name.
+    const sync = ui.page.locator('button[hx-post="/library/sync"]');
+    assert.ok(!/Cancel/.test((await sync.innerText()).trim()), "no longer shows Cancel");
+    assert.equal(await sync.getAttribute("aria-label"), "Sync Library");
   });
 });
 
@@ -221,10 +436,10 @@ describe("user navigation", () => {
     await ui.page.click('form[action="/user/add"] button[type=submit]');
     await ui.page.waitForLoadState("networkidle");
 
-    const toggle = ui.page.locator(".topbar [data-dropdown-toggle]");
+    const toggle = ui.page.locator(".topbar-actions [data-dropdown-toggle]");
     assert.match((await toggle.innerText()).trim(), /^alice/);
     await toggle.click();
-    const menu = await ui.page.locator(".topbar .dropdown-menu").innerText();
+    const menu = await ui.page.locator(".topbar-actions .dropdown-menu").innerText();
     for (const entry of ["Settings", "Add user", "Sign out"]) {
       assert.match(menu, new RegExp(entry));
     }
@@ -271,9 +486,18 @@ describe("Audible sign-in from the settings page", () => {
     await ui.page.click('form[action="/user/audible/complete"] button[type=submit]');
     await ui.page.waitForLoadState("networkidle");
 
+    // Lands back on the library, which auto-triggers a sync — no extra click.
+    assert.equal(new URL(ui.page.url()).pathname, "/");
+    await ui.page.click("#log-toggle");
+    await ui.page.waitForFunction(
+      () => /Sync started/.test(document.querySelector("#progress-panel")?.textContent || ""),
+      { timeout: 10000 },
+    );
+
+    const settings = await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
     const body = await ui.page.locator(".auth-wrap").innerText();
-    assert.match(body, /connected as Test User/i);
     assert.match(body, /Connected/);
+    assert.ok(settings?.ok());
     assert.deepEqual(
       ui.consoleErrors.filter((e) => /Content Security Policy/i.test(e)),
       [],
@@ -349,7 +573,7 @@ describe("action menus are not clipped by the table container", () => {
   });
 });
 
-describe("one-click Get MP3s", () => {
+describe("one-click Download", () => {
   let ui: UiContext;
 
   before(async () => {
@@ -361,11 +585,11 @@ describe("one-click Get MP3s", () => {
     await ui?.close();
   });
 
-  it("labels every row action Get MP3s", async () => {
+  it("labels every row action Download", async () => {
     const labels = await ui.page.locator("#books-table .split-main").allInnerTexts();
     assert.ok(labels.length >= 3, "expected several rows");
     for (const label of labels) {
-      assert.match(label.trim(), /^Get MP3s$/, `unexpected primary label: ${label}`);
+      assert.match(label.trim(), /^Download$/, `unexpected primary label: ${label}`);
     }
   });
 

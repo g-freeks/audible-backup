@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
-import { buildInfo, versionLine } from "../src/version.ts";
+import { buildInfo, versionLine, formatDevRef } from "../src/version.ts";
 
 /**
  * The settings page shows which build is running. That only helps if it is
@@ -60,6 +60,36 @@ describe("build information", () => {
         assert.equal(buildInfo().build, "dev");
         assert.ok(versionLine().length > 0);
       });
+    }
+  });
+});
+
+describe("dev ref shown alongside a development build", () => {
+  it("suppresses the ref on main — the assumed default is not worth calling out", () => {
+    assert.equal(formatDevRef("main", ""), undefined);
+  });
+
+  it("shows a non-main branch name", () => {
+    assert.equal(formatDevRef("feature-x", ""), "feature-x");
+  });
+
+  it("falls back to the short commit when HEAD is detached", () => {
+    assert.equal(formatDevRef("HEAD", "b53b774"), "b53b774");
+  });
+
+  it("has nothing to show for a detached HEAD with no commit either", () => {
+    assert.equal(formatDevRef("HEAD", ""), undefined);
+  });
+
+  it("a dev build's devRef, when present, ends up in versionLine()", () => {
+    // Runs against the real checkout: whatever git reports for this working
+    // tree is exactly what should appear, since main is deliberately omitted.
+    const info = buildInfo();
+    if (info.build !== "dev") return; // packaged in this environment
+    if (info.devRef) {
+      assert.ok(versionLine().includes(`(${info.devRef})`));
+    } else {
+      assert.ok(!/\(.*\)/.test(versionLine()), "main (or no git) shows no ref");
     }
   });
 });
