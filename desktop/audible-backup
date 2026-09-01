@@ -15,6 +15,7 @@
 import GLib from "gi://GLib";
 import Gio from "gi://Gio";
 import Gtk from "gi://Gtk?version=4.0";
+import Adw from "gi://Adw?version=1";
 import WebKit from "gi://WebKit?version=6.0";
 import system from "system";
 
@@ -187,7 +188,7 @@ function messagePage(title, detail, spinning) {
   return box;
 }
 
-const app = new Gtk.Application({
+const app = new Adw.Application({
   application_id: APP_ID,
   flags: Gio.ApplicationFlags.DEFAULT_FLAGS,
 });
@@ -200,7 +201,15 @@ app.connect("activate", () => {
     return;
   }
 
-  const window = new Gtk.ApplicationWindow({
+  // The page renders its own dark theme unconditionally (see
+  // src/web/templates/layout.ts), so the native window chrome is forced dark
+  // too — otherwise GTK's default light titlebar sits directly on top of the
+  // page's near-black background, which is the mismatch this app most
+  // visibly had. Once the page follows the system theme (a separate change),
+  // this should follow it too instead of forcing dark.
+  Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK);
+
+  const window = new Adw.ApplicationWindow({
     application: app,
     title: "Audible Backup",
     default_width: 1100,
@@ -215,7 +224,16 @@ app.connect("activate", () => {
     messagePage("Starting Audible Backup", "Waiting for the server…", true),
     "loading",
   );
-  window.set_child(stack);
+
+  // AdwApplicationWindow draws no titlebar at all unless given one — unlike
+  // plain GTK, it will not fall back to a default. The page already shows its
+  // own "Audible Backup" heading, so this bar carries no title of its own; it
+  // exists only so the window still has close/minimize/maximize buttons.
+  const header = new Adw.HeaderBar({ show_title: false });
+  const toolbarView = new Adw.ToolbarView();
+  toolbarView.add_top_bar(header);
+  toolbarView.set_content(stack);
+  window.set_content(toolbarView);
 
   const showFailure = (message) => {
     const detail = server.log ? `${message}\n\n${server.log}` : message;
