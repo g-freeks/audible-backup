@@ -60,6 +60,14 @@ describe("AudibleLibrary with helper", () => {
     assert.deepEqual(entries.map((e) => e.asin), ["B0FAKE00001"]);
     assert.equal(entries[0].author, "Fake Author");
     assert.equal(entries[0].title, "Fake Book");
+    assert.equal(entries[0].narrators, "Fake Narrator");
+    assert.equal(entries[0].releaseDate, "2021-04-22");
+    assert.equal(entries[0].addedToLibraryDate, "2026-08-30T18:01:12.447Z");
+    assert.equal(entries[0].runtimeMinutes, 688);
+    assert.equal(entries[0].language, "english");
+    assert.equal(entries[0].formatType, "unabridged");
+    assert.equal(entries[0].seriesTitle, "Fake Series");
+    assert.equal(entries[0].seriesSequence, "2");
   });
 
   it("downloads AAXC via the helper and records the real path", async () => {
@@ -75,7 +83,7 @@ describe("AudibleLibrary with helper", () => {
   it("marks books not downloadable when the license is denied", async () => {
     process.env.FAKE_HELPER_MODE = "not_downloadable";
     const library = makeLibrary();
-    upsertBook("B0FAKE00009", "A", "Denied Book");
+    upsertBook("B0FAKE00009", { author: "A", title: "Denied Book" });
     const ok = await library.downloadBook("B0FAKE00009", "A", "Denied Book");
     assert.equal(ok, false);
     const row = getAudiobookByAsin("B0FAKE00009");

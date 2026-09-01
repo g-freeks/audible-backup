@@ -45,6 +45,24 @@ function initSchema(db: DatabaseSync): void {
     db.exec("ALTER TABLE audiobooks ADD COLUMN not_downloadable_at TEXT");
   }
 
+  // Migration: informational metadata from Audible, not pipeline state (see
+  // issue #32) — fits alongside author/title.
+  const metadataColumns: [string, string][] = [
+    ["released_at", "TEXT"],
+    ["added_to_library_at", "TEXT"],
+    ["runtime_minutes", "INTEGER"],
+    ["narrators", "TEXT"],
+    ["format_type", "TEXT"],
+    ["language", "TEXT"],
+    ["series_title", "TEXT"],
+    ["series_sequence", "TEXT"],
+  ];
+  for (const [name, type] of metadataColumns) {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE audiobooks ADD COLUMN ${name} ${type}`);
+    }
+  }
+
   // Migration: the DB used to track the whole download->convert pipeline.
   // Conversion state is now derived from the filesystem instead (see
   // converter.ts's findConvertedChapters), so drop those columns.
@@ -122,6 +140,14 @@ export interface AudiobookRow {
   aax_path: string | null;
   ignored_at: string | null;
   not_downloadable_at: string | null;
+  released_at: string | null;
+  added_to_library_at: string | null;
+  runtime_minutes: number | null;
+  narrators: string | null;
+  format_type: string | null;
+  language: string | null;
+  series_title: string | null;
+  series_sequence: string | null;
 }
 
 export function getAllAudiobooks(): AudiobookRow[] {
@@ -195,13 +221,51 @@ export function markNotDownloadable(asin: string): void {
   `).run(asin);
 }
 
-export function upsertBook(asin: string, author: string, title: string): void {
+export interface BookMetadata {
+  author: string;
+  title: string;
+  narrators?: string;
+  releaseDate?: string;
+  addedToLibraryDate?: string;
+  runtimeMinutes?: number;
+  language?: string;
+  formatType?: string;
+  seriesTitle?: string;
+  seriesSequence?: string;
+}
+
+export function upsertBook(asin: string, metadata: BookMetadata): void {
   const d = getDb();
   d.prepare(`
-    INSERT INTO audiobooks (asin, author, title)
-    VALUES (?, ?, ?)
-    ON CONFLICT(asin) DO UPDATE SET author = excluded.author, title = excluded.title
-  `).run(asin, author, title);
+    INSERT INTO audiobooks (
+      asin, author, title, narrators, released_at, added_to_library_at,
+      runtime_minutes, language, format_type, series_title, series_sequence
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(asin) DO UPDATE SET
+      author = excluded.author,
+      title = excluded.title,
+      narrators = excluded.narrators,
+      released_at = excluded.released_at,
+      added_to_library_at = excluded.added_to_library_at,
+      runtime_minutes = excluded.runtime_minutes,
+      language = excluded.language,
+      format_type = excluded.format_type,
+      series_title = excluded.series_title,
+      series_sequence = excluded.series_sequence
+  `).run(
+    asin,
+    metadata.author,
+    metadata.title,
+    metadata.narrators ?? null,
+    metadata.releaseDate ?? null,
+    metadata.addedToLibraryDate ?? null,
+    metadata.runtimeMinutes ?? null,
+    metadata.language ?? null,
+    metadata.formatType ?? null,
+    metadata.seriesTitle ?? null,
+    metadata.seriesSequence ?? null,
+  );
 }
 
 export function getNotDownloadedBooks(): AudiobookRow[] {

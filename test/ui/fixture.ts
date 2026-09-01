@@ -146,7 +146,7 @@ export async function seedBooks(env: NodeJS.ProcessEnv): Promise<void> {
   fs.writeFileSync(path.join(convertedDir, "02 - Chapter Two.mp3"), "more fake audio");
 
   await withFixtureDb(env, (db) => {
-    db.upsertBook("B0NOTDOWN1", "Ursula K. Le Guin", "A Wizard of Earthsea");
+    db.upsertBook("B0NOTDOWN1", { author: "Ursula K. Le Guin", title: "A Wizard of Earthsea" });
     db.markDownloaded("B0DOWNLOAD", "Neal Stephenson", "Snow Crash", "/x/B0DOWNLOAD.aaxc");
     db.markDownloaded("B0CONVERT1", "Frank Herbert", "Dune", "/x/B0CONVERT1.aaxc");
   });

@@ -26,6 +26,14 @@ export interface HelperLibraryItem {
   title: string;
   authors: string;
   downloadable: boolean;
+  narrators?: string;
+  releaseDate?: string;
+  addedToLibraryDate?: string;
+  runtimeMinutes?: number;
+  language?: string;
+  formatType?: string;
+  seriesTitle?: string;
+  seriesSequence?: string;
 }
 
 /** Thrown when the Audible client cannot run at all. */

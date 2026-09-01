@@ -60,6 +60,14 @@ export interface AudiobookEntry {
   author: string;
   title: string;
   fullLine: string;
+  narrators?: string;
+  releaseDate?: string;
+  addedToLibraryDate?: string;
+  runtimeMinutes?: number;
+  language?: string;
+  formatType?: string;
+  seriesTitle?: string;
+  seriesSequence?: string;
 }
 
 export class AudibleLibrary {
@@ -142,6 +150,14 @@ export class AudibleLibrary {
           author: item.authors || "",
           title: item.title || item.asin,
           fullLine: "",
+          narrators: item.narrators,
+          releaseDate: item.releaseDate,
+          addedToLibraryDate: item.addedToLibraryDate,
+          runtimeMinutes: item.runtimeMinutes,
+          language: item.language,
+          formatType: item.formatType,
+          seriesTitle: item.seriesTitle,
+          seriesSequence: item.seriesSequence,
         }));
     } catch (error) {
       if (error instanceof HelperUnavailableError) {
@@ -429,7 +445,18 @@ export class AudibleLibrary {
 
     // Upsert all books into the DB so the web UI can display them
     for (const book of books) {
-      upsertBook(book.asin, book.author, book.title);
+      upsertBook(book.asin, {
+        author: book.author,
+        title: book.title,
+        narrators: book.narrators,
+        releaseDate: book.releaseDate,
+        addedToLibraryDate: book.addedToLibraryDate,
+        runtimeMinutes: book.runtimeMinutes,
+        language: book.language,
+        formatType: book.formatType,
+        seriesTitle: book.seriesTitle,
+        seriesSequence: book.seriesSequence,
+      });
     }
 
     if (books.length === 0) {

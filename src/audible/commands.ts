@@ -129,11 +129,61 @@ export function loginStatus(configDir: string): HelperEvent {
 
 // --- library ------------------------------------------------------------
 
+interface LibrarySeries {
+  title?: string;
+  sequence?: string;
+}
+
 interface LibraryItem {
   asin?: string;
   title?: string;
   authors?: { name?: string }[];
+  narrators?: { name?: string }[];
   content_delivery_type?: string;
+  release_date?: string;
+  purchase_date?: string;
+  runtime_length_min?: number;
+  language?: string;
+  format_type?: string;
+  series?: LibrarySeries[];
+}
+
+/**
+ * An item can belong to more than one series at once — e.g. an umbrella
+ * "universe" series with no sequence number, plus the actual numbered
+ * series. Prefer the entry that has a sequence, since that's the one
+ * meaningful for sort order.
+ */
+function pickSeries(series: LibrarySeries[] | undefined): LibrarySeries | undefined {
+  if (!series || series.length === 0) return undefined;
+  return series.find((s) => s.sequence) || series[0];
+}
+
+/** Shapes one raw API library item into the flat, ready-to-use form callers expect. */
+export function mapLibraryItem(item: LibraryItem): Record<string, unknown> | null {
+  if (!item.asin) return null;
+  const delivery = item.content_delivery_type || "";
+  const series = pickSeries(item.series);
+  return {
+    asin: item.asin,
+    title: item.title || item.asin,
+    authors: (item.authors || [])
+      .map((a) => a.name)
+      .filter(Boolean)
+      .join(", "),
+    narrators: (item.narrators || [])
+      .map((n) => n.name)
+      .filter(Boolean)
+      .join(", "),
+    downloadable: delivery !== "PodcastParent" && delivery !== "Periodical",
+    releaseDate: item.release_date,
+    addedToLibraryDate: item.purchase_date,
+    runtimeMinutes: item.runtime_length_min,
+    language: item.language,
+    formatType: item.format_type,
+    seriesTitle: series?.title,
+    seriesSequence: series?.sequence,
+  };
 }
 
 export async function library(configDir: string): Promise<HelperEvent> {
@@ -146,25 +196,18 @@ export async function library(configDir: string): Promise<HelperEvent> {
       query: {
         num_results: 1000,
         page,
-        // 'contributors' is what carries authors; without it the API returns
-        // none at all and every row looks blank.
-        response_groups: "contributors,product_desc,product_attrs",
+        // 'contributors' carries authors/narrators, 'product_desc' carries
+        // release_date, 'product_attrs' carries runtime/language/format, and
+        // 'series' carries series membership — without each, the
+        // corresponding field comes back missing/null.
+        response_groups: "contributors,product_desc,product_attrs,series",
       },
     });
 
     const batch = response.items || [];
     for (const item of batch) {
-      if (!item.asin) continue;
-      const delivery = item.content_delivery_type || "";
-      items.push({
-        asin: item.asin,
-        title: item.title || item.asin,
-        authors: (item.authors || [])
-          .map((a) => a.name)
-          .filter(Boolean)
-          .join(", "),
-        downloadable: delivery !== "PodcastParent" && delivery !== "Periodical",
-      });
+      const mapped = mapLibraryItem(item);
+      if (mapped) items.push(mapped);
     }
     if (batch.length < 1000) break;
   }

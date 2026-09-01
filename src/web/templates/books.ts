@@ -3,6 +3,23 @@ import { getAllBooks, type AudiobookRow } from "../../db.ts";
 import { escapeHtml } from "./html.ts";
 import { statusBadge } from "./components.ts";
 
+function formatRuntime(minutes: number | null): string {
+  if (!minutes) return "";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "";
+  // downloaded_at is SQLite's bare datetime('now') — "YYYY-MM-DD HH:MM:SS",
+  // with no timezone, so it needs "Z" appended to parse as UTC (same as the
+  // existing Downloaded column). Audible's own dates (release_date,
+  // purchase_date) are already a plain ISO date or a full ISO timestamp
+  // with their own "Z", so appending one more is harmless/ignored there.
+  return new Date(iso.endsWith("Z") ? iso : `${iso}Z`).toLocaleDateString();
+}
+
 function getStatus(book: AudiobookRow, convertibleAsins: Set<string>, convertedAsins: Map<string, number>): string {
   if (book.ignored_at) return "ignored";
   if (book.not_downloadable_at) return "not-downloadable";
@@ -135,12 +152,19 @@ export function booksPage(convertibleAsins: Set<string>, convertedAsins: Map<str
           <thead>
             <tr>
               <th><input type="checkbox" id="select-all" aria-label="Select all visible books"></th>
-              <th class="sortable" data-sort-col="1" data-sort-type="string">Title</th>
-              <th class="sortable col-author" data-sort-col="2" data-sort-type="string">Author</th>
-              <th class="sortable" data-sort-col="3" data-sort-type="string">ASIN</th>
-              <th class="sortable" data-sort-col="4" data-sort-type="status">Status</th>
-              <th class="sortable" data-sort-col="5" data-sort-type="string">Downloaded</th>
-              <th class="sortable" data-sort-col="6" data-sort-type="number">Chapters</th>
+              <th class="sortable col-title" data-sort-col="1" data-sort-type="string">Title</th>
+              <th class="sortable col-author" data-sort-col="2" data-sort-type="string">Series</th>
+              <th class="sortable col-author" data-sort-col="3" data-sort-type="string">Author</th>
+              <th class="sortable col-author" data-sort-col="4" data-sort-type="string">Narrator</th>
+              <th class="sortable" data-sort-col="5" data-sort-type="string">ASIN</th>
+              <th class="sortable" data-sort-col="6" data-sort-type="status">Status</th>
+              <th class="sortable" data-sort-col="7" data-sort-type="string">Downloaded</th>
+              <th class="sortable" data-sort-col="8" data-sort-type="string">Purchased</th>
+              <th class="sortable" data-sort-col="9" data-sort-type="string">Released</th>
+              <th class="sortable" data-sort-col="10" data-sort-type="number">Runtime</th>
+              <th class="sortable" data-sort-col="11" data-sort-type="string">Format</th>
+              <th class="sortable" data-sort-col="12" data-sort-type="string">Language</th>
+              <th class="sortable" data-sort-col="13" data-sort-type="number">Chapters</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -149,17 +173,33 @@ export function booksPage(convertibleAsins: Set<string>, convertedAsins: Map<str
               const status = getStatus(book, convertibleAsins, convertedAsins);
               const title = escapeHtml(book.title || book.asin);
               const author = escapeHtml(book.author || "");
-              const date = book.downloaded_at ? new Date(book.downloaded_at + "Z").toLocaleDateString() : "";
+              const narrators = escapeHtml(book.narrators || "");
+              const series = escapeHtml(
+                book.series_title ? `${book.series_title}${book.series_sequence ? ` #${book.series_sequence}` : ""}` : "",
+              );
+              const format = escapeHtml(book.format_type || "");
+              const language = escapeHtml(book.language || "");
+              const date = formatDate(book.downloaded_at);
               const dateSortVal = book.downloaded_at || "";
+              const purchased = formatDate(book.added_to_library_at);
+              const released = formatDate(book.released_at);
+              const runtime = formatRuntime(book.runtime_minutes);
               const chapters = convertedAsins.get(book.asin) ?? "";
-              const searchData = `${title} ${author} ${book.asin}`.toLowerCase();
+              const searchData = `${title} ${author} ${narrators} ${series} ${book.asin}`.toLowerCase();
               return `<tr data-search="${escapeHtml(searchData)}">
                 <td><input type="checkbox" name="asin" value="${book.asin}" aria-label="Select ${title}"></td>
-                <td data-sort-val="${escapeHtml(title.toLowerCase())}">${title}</td>
+                <td class="col-title" data-sort-val="${escapeHtml(title.toLowerCase())}" title="${title}">${title}</td>
+                <td class="col-author" data-sort-val="${escapeHtml((book.series_title || "").toLowerCase())}" title="${series}">${series}</td>
                 <td class="col-author" data-sort-val="${escapeHtml(author.toLowerCase())}" title="${author}">${author}</td>
+                <td class="col-author" data-sort-val="${escapeHtml(narrators.toLowerCase())}" title="${narrators}">${narrators}</td>
                 <td data-sort-val="${book.asin}"><code>${book.asin}</code></td>
                 <td data-sort-val="${status}"><span id="status-${book.asin}">${statusBadge(status)}</span></td>
                 <td data-sort-val="${dateSortVal}">${date}</td>
+                <td data-sort-val="${book.added_to_library_at || ""}">${purchased}</td>
+                <td data-sort-val="${book.released_at || ""}">${released}</td>
+                <td data-sort-val="${book.runtime_minutes ?? ""}">${runtime}</td>
+                <td data-sort-val="${format}">${format}</td>
+                <td data-sort-val="${language}">${language}</td>
                 <td data-sort-val="${chapters}">${chapters}</td>
                 <td>${actionButtons(book, status)}</td>
               </tr>`;
