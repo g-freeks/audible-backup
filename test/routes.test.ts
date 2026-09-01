@@ -790,6 +790,106 @@ describe("activation bytes tooltip", () => {
   });
 });
 
+describe("audio quality settings", () => {
+  async function signedIn(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("defaults to mp3/medium with format and quality buttons for a new user", async () => {
+    const cookie = await signedIn("frank");
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+
+    assert.match(html, /btn-primary"[^>]*data-audio-format="mp3"/, "mp3 selected by default");
+    assert.match(html, /btn-primary"[^>]*data-audio-quality="medium"/, "medium selected by default");
+    for (const format of ["mp3", "flac", "aac"]) {
+      assert.match(html, new RegExp(`data-audio-format="${format}"`));
+    }
+    for (const quality of ["low", "medium", "high"]) {
+      assert.match(html, new RegExp(`data-audio-quality="${quality}"`));
+    }
+    assert.match(html, /id="audio-args"[^>]*readonly/, "read-only until the manual toggle is checked");
+    assert.match(html, /id="audio-presets-data"/);
+  });
+
+  it("saves a preset choice (format + quality, no custom override)", async () => {
+    const cookie = await signedIn("grace");
+    const res = await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ audio_format: "flac", audio_quality: "high" }),
+    });
+    assert.equal(res.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("grace")?.audioSettings, { format: "flac", quality: "high" });
+
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(html, /btn-primary"[^>]*data-audio-format="flac"/);
+    assert.match(html, /btn-primary"[^>]*data-audio-quality="high"/);
+  });
+
+  it("saves a custom ffmpeg args override when the manual toggle is checked", async () => {
+    const cookie = await signedIn("heidi");
+    const res = await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({
+        audio_format: "mp3",
+        audio_quality: "low",
+        audio_custom_enabled: "true",
+        audio_args: "-c:a libmp3lame -q:a 0",
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("heidi")?.audioSettings, {
+      format: "mp3",
+      quality: "low",
+      customArgs: "-c:a libmp3lame -q:a 0",
+    });
+
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(html, /id="audio-custom-toggle"[^>]*checked/);
+    assert.match(html, /id="audio-args"[^>]*value="-c:a libmp3lame -q:a 0"/);
+    assert.ok(!/id="audio-args"[^>]*readonly/.test(html), "editable once a custom override is saved");
+  });
+
+  it("ignores audio_args when the manual toggle isn't checked", async () => {
+    const cookie = await signedIn("ivan");
+    await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({
+        audio_format: "aac",
+        audio_quality: "medium",
+        audio_args: "-c:a something-typed-but-not-enabled",
+      }),
+    });
+
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("ivan")?.audioSettings, { format: "aac", quality: "medium" });
+  });
+
+  it("ignores an invalid format/quality instead of saving garbage", async () => {
+    const cookie = await signedIn("judy");
+    const res = await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ audio_format: "wav", audio_quality: "ultra" }),
+    });
+    assert.equal(res.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("judy")?.audioSettings, undefined);
+  });
+});
+
 // --- htmx attribute inheritance regression ---
 
 describe("action buttons are not affected by inherited hx-select", () => {

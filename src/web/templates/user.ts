@@ -1,6 +1,15 @@
 import { layout, type UserNav } from "./layout.ts";
 import { versionLine } from "../../version.ts";
 import { escapeHtml } from "./html.ts";
+import {
+  AUDIO_FORMATS,
+  AUDIO_QUALITIES,
+  AUDIO_PRESETS,
+  audioArgsString,
+  type AudioSettings,
+  type AudioFormat,
+  type AudioQuality,
+} from "../../converter.ts";
 
 export interface UserListEntry {
   name: string;
@@ -39,6 +48,8 @@ const formStyles = `
     .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
     .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
     .build-line { margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
+    .btn-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .quality-section label:not(:first-child) { margin-top: 0.4rem; }
     .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
     .danger-zone h2 { color: var(--danger); }
   </style>
@@ -115,6 +126,7 @@ export interface SettingsView {
   /** Lights up the topbar's log indicator when an operation (e.g. an
    * auto-triggered sync) is already running for this user. */
   operationRunning?: boolean;
+  audioSettings: AudioSettings;
 }
 
 const MARKETPLACES: [string, string][] = [
@@ -188,6 +200,56 @@ function audibleCard(audible: AudibleStatus): string {
   </div>`;
 }
 
+const FORMAT_LABELS: Record<AudioFormat, string> = { mp3: "MP3", flac: "FLAC", aac: "AAC" };
+const QUALITY_LABELS: Record<AudioQuality, string> = { low: "Low", medium: "Medium", high: "High" };
+
+/**
+ * Format/quality preset buttons, a live ffmpeg-args preview, and a toggle to
+ * hand-edit that string. The buttons mutate the args field directly (client
+ * JS in app.js, driven by the presets/estimates embedded below) — the toggle
+ * only controls whether the field accepts direct typing.
+ */
+function qualitySection(settings: AudioSettings): string {
+  const hasCustom = !!settings.customArgs?.trim();
+  const argsString = audioArgsString(settings);
+
+  const presetStrings: Record<string, Record<string, string>> = {};
+  const estimateStrings: Record<string, Record<string, string>> = {};
+  for (const format of AUDIO_FORMATS) {
+    presetStrings[format] = {};
+    estimateStrings[format] = {};
+    for (const quality of AUDIO_QUALITIES) {
+      presetStrings[format][quality] = AUDIO_PRESETS[format][quality].args.join(" ");
+      estimateStrings[format][quality] = AUDIO_PRESETS[format][quality].estimate;
+    }
+  }
+
+  return `
+    <div class="quality-section">
+      <label>Output format</label>
+      <div class="btn-row" role="group" aria-label="Output format">
+        ${AUDIO_FORMATS.map((f) => `<button type="button" class="btn btn-sm ${f === settings.format ? "btn-primary" : "btn-ghost"}" data-audio-format="${f}" aria-pressed="${f === settings.format}">${FORMAT_LABELS[f]}</button>`).join("")}
+      </div>
+      <label>Quality</label>
+      <div class="btn-row" role="group" aria-label="Quality">
+        ${AUDIO_QUALITIES.map((q) => `<button type="button" class="btn btn-sm ${q === settings.quality ? "btn-primary" : "btn-ghost"}" data-audio-quality="${q}" aria-pressed="${q === settings.quality}" title="${escapeHtml(AUDIO_PRESETS[settings.format][q].estimate)}">${QUALITY_LABELS[q]}</button>`).join("")}
+      </div>
+      <input type="hidden" name="audio_format" id="audio-format-input" value="${settings.format}">
+      <input type="hidden" name="audio_quality" id="audio-quality-input" value="${settings.quality}">
+
+      <label for="audio-args">ffmpeg audio args</label>
+      <input id="audio-args" name="audio_args" value="${escapeHtml(argsString)}" ${hasCustom ? "" : "readonly"} placeholder="-c:a libmp3lame -b:a 128k">
+      <div class="checkbox-row">
+        <input id="audio-custom-toggle" name="audio_custom_enabled" type="checkbox" value="true" ${hasCustom ? "checked" : ""}>
+        <label for="audio-custom-toggle">Edit the ffmpeg command manually</label>
+      </div>
+      <div id="audio-presets-data" hidden
+           data-presets="${escapeHtml(JSON.stringify(presetStrings))}"
+           data-estimates="${escapeHtml(JSON.stringify(estimateStrings))}"></div>
+    </div>
+  `;
+}
+
 export function settingsPage(view: SettingsView): string {
   const { userName, activationBytes, hasPassword, message, error, userNav, desktop, operationRunning } = view;
   const content = `
@@ -212,6 +274,10 @@ export function settingsPage(view: SettingsView): string {
             <input id="set-remove-pw" name="remove_password" type="checkbox" value="true">
             <label for="set-remove-pw">Remove password</label>
           </div>` : ""}
+
+          <h2 style="margin-top:1rem">Conversion quality</h2>
+          ${qualitySection(view.audioSettings)}
+
           <button class="btn btn-primary" type="submit">Save</button>
         </form>
       </div>

@@ -93,9 +93,6 @@ export const config = {
       "~/Music/audible-backup/converted",
     );
   },
-  get mp3Quality() {
-    return env("MP3_QUALITY", "4");
-  },
   get downloadDelayMs() {
     return parseInt(env("DOWNLOAD_DELAY_MS", "2000"), 10);
   },

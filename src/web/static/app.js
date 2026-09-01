@@ -311,6 +311,67 @@
     applyFilters();
   }
 
+  // ---- Settings: conversion format/quality ----
+  // The preset/format buttons mutate the visible args field directly; the
+  // checkbox only controls whether that field also accepts direct typing.
+  function audioPresetsData() {
+    var el = document.getElementById("audio-presets-data");
+    if (!el) return null;
+    try {
+      return {
+        presets: JSON.parse(el.dataset.presets || "{}"),
+        estimates: JSON.parse(el.dataset.estimates || "{}"),
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function selectAudioButton(groupSelector, value) {
+    document.querySelectorAll(groupSelector).forEach(function (btn) {
+      var active = (btn.dataset.audioFormat || btn.dataset.audioQuality) === value;
+      btn.classList.toggle("btn-primary", active);
+      btn.classList.toggle("btn-ghost", !active);
+      btn.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function updateAudioArgsDisplay() {
+    var data = audioPresetsData();
+    var argsInput = document.getElementById("audio-args");
+    var formatInput = document.getElementById("audio-format-input");
+    var qualityInput = document.getElementById("audio-quality-input");
+    if (!data || !argsInput || !formatInput || !qualityInput) return;
+    var byFormat = data.presets[formatInput.value];
+    argsInput.value = (byFormat && byFormat[qualityInput.value]) || "";
+  }
+
+  function updateQualityTooltips(format) {
+    var data = audioPresetsData();
+    if (!data) return;
+    var byFormat = data.estimates[format];
+    if (!byFormat) return;
+    document.querySelectorAll("[data-audio-quality]").forEach(function (btn) {
+      var estimate = byFormat[btn.dataset.audioQuality];
+      if (estimate) btn.title = estimate;
+    });
+  }
+
+  function setAudioFormat(format) {
+    selectAudioButton("[data-audio-format]", format);
+    var input = document.getElementById("audio-format-input");
+    if (input) input.value = format;
+    updateQualityTooltips(format);
+    updateAudioArgsDisplay();
+  }
+
+  function setAudioQuality(quality) {
+    selectAudioButton("[data-audio-quality]", quality);
+    var input = document.getElementById("audio-quality-input");
+    if (input) input.value = quality;
+    updateAudioArgsDisplay();
+  }
+
   // ---- Delegated events ----
   // Capture phase: a button turned into "Cancel" still carries its original
   // hx-post, so stop the event before htmx's own listener sees it.
@@ -353,6 +414,18 @@
       }
       return;
     }
+
+    var formatBtn = e.target.closest("[data-audio-format]");
+    if (formatBtn) {
+      setAudioFormat(formatBtn.dataset.audioFormat);
+      return;
+    }
+    var qualityBtn = e.target.closest("[data-audio-quality]");
+    if (qualityBtn) {
+      setAudioQuality(qualityBtn.dataset.audioQuality);
+      return;
+    }
+
     closeDropdowns(e.target);
 
     var actionBtn = e.target.closest("[data-action-url]");
@@ -423,6 +496,14 @@
     }
     if (e.target.dataset.colToggle) {
       toggleColumn(e.target.dataset.colToggle, e.target.checked);
+      return;
+    }
+    if (e.target.id === "audio-custom-toggle") {
+      var argsInput = document.getElementById("audio-args");
+      if (argsInput) {
+        argsInput.readOnly = !e.target.checked;
+        if (e.target.checked) argsInput.focus();
+      }
     }
   });
 

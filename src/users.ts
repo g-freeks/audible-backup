@@ -3,6 +3,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { isDesktopMode, desktopPaths } from "./config.ts"; // also loads .env
+import type { AudioSettings } from "./converter.ts";
 
 /**
  * Multi-tenant user registry. Users live in a JSON file under the users root;
@@ -29,6 +30,9 @@ export interface User {
    * every launch, so localStorage (scoped to that origin) would reset every
    * restart. */
   columnPrefs?: ColumnPrefs;
+  /** Output format/quality for conversions. Unset means the converter's
+   * own default (mp3, medium). */
+  audioSettings?: AudioSettings;
 }
 
 export interface UserDirs {
@@ -197,6 +201,14 @@ export function setColumnPrefs(name: string, prefs: ColumnPrefs): void {
   const user = users.find((u) => u.name === name);
   if (!user) throw new Error(`Unknown user: ${name}`);
   user.columnPrefs = prefs;
+  saveUsers(users);
+}
+
+export function setAudioSettings(name: string, settings: AudioSettings): void {
+  const users = listUsers();
+  const user = users.find((u) => u.name === name);
+  if (!user) throw new Error(`Unknown user: ${name}`);
+  user.audioSettings = settings;
   saveUsers(users);
 }
 

@@ -15,6 +15,7 @@ import {
   runWithUser,
   currentUserName,
   setColumnPrefs,
+  setAudioSettings,
 } from "../src/users.ts";
 import { closeDb, markDownloaded, getAllAudiobooks } from "../src/db.ts";
 
@@ -143,5 +144,45 @@ describe("column prefs", () => {
 
   it("rejects an unknown user", () => {
     assert.throws(() => setColumnPrefs("nobody", { hidden: [], order: [] }), /Unknown user/);
+  });
+});
+
+describe("audio settings", () => {
+  it("saves and reads back a user's format/quality choice", () => {
+    addUser("alice");
+    assert.equal(getUser("alice")?.audioSettings, undefined, "nothing saved yet");
+
+    setAudioSettings("alice", { format: "flac", quality: "high" });
+    assert.deepEqual(getUser("alice")?.audioSettings, { format: "flac", quality: "high" });
+  });
+
+  it("saves a custom ffmpeg args override alongside format/quality", () => {
+    addUser("alice");
+    setAudioSettings("alice", { format: "mp3", quality: "low", customArgs: "-c:a libmp3lame -q:a 0" });
+    assert.deepEqual(getUser("alice")?.audioSettings, {
+      format: "mp3",
+      quality: "low",
+      customArgs: "-c:a libmp3lame -q:a 0",
+    });
+  });
+
+  it("survives the same round trip a fresh process would see (persisted to disk)", () => {
+    addUser("alice");
+    setAudioSettings("alice", { format: "aac", quality: "medium" });
+    assert.deepEqual(listUsers().find((u) => u.name === "alice")?.audioSettings, {
+      format: "aac",
+      quality: "medium",
+    });
+  });
+
+  it("keeps each user's audio settings separate", () => {
+    addUser("alice");
+    addUser("bob");
+    setAudioSettings("alice", { format: "flac", quality: "high" });
+    assert.equal(getUser("bob")?.audioSettings, undefined);
+  });
+
+  it("rejects an unknown user", () => {
+    assert.throws(() => setAudioSettings("nobody", { format: "mp3", quality: "medium" }), /Unknown user/);
   });
 });

@@ -87,7 +87,7 @@ npm run db-reset      # Reset the database
 
 ## Configuration
 
-All config is in `.env` (see `.env.example`). Key variables: `AUDIBLE_ACTIVATION_BYTES`, `AUDIBLE_TARGET_DIR`, `AUDIBLE_OUTPUT_DIR`, `DB_PATH`, `MP3_QUALITY`.
+All config is in `.env` (see `.env.example`). Key variables: `AUDIBLE_ACTIVATION_BYTES`, `AUDIBLE_TARGET_DIR`, `AUDIBLE_OUTPUT_DIR`, `DB_PATH`. Audio format/quality (`AudioSettings` in `converter.ts`) is a per-account setting instead, stored on the user record and edited under Settings.
 
 ## Docker
 

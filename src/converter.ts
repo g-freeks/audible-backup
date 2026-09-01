@@ -83,6 +83,11 @@ export function getBookDirName(asin: string, bookTitle: string): string {
  * against a known path rather than a stored DB flag — no title-matching
  * against unknown files involved.
  */
+/** Extensions any supported output format's chapter files can end in — kept
+ * broad (not just the current format) so a book converted before a format
+ * change still reads as converted. */
+const AUDIO_EXTENSIONS = ["mp3", "flac", "m4a"];
+
 export function findConvertedChapters(
   outputDir: string,
   asin: string,
@@ -90,7 +95,131 @@ export function findConvertedChapters(
 ): string[] {
   const bookDir = path.join(outputDir, getBookDirName(asin, title));
   if (!fs.existsSync(bookDir)) return [];
-  return fs.readdirSync(bookDir).filter((f) => f.endsWith(".mp3"));
+  return fs.readdirSync(bookDir).filter((f) =>
+    AUDIO_EXTENSIONS.some((ext) => f.endsWith(`.${ext}`)),
+  );
+}
+
+// --- Audio quality settings ---
+//
+// Presets map (format, quality) to the ffmpeg args that encode the decrypted
+// audio, plus a rough "MB per hour of runtime" shown as a tooltip in the
+// settings UI. A user can override the derived args string entirely instead
+// (customArgs) — still just an argv array handed to `spawn`, never a shell,
+// so there is no shell-injection surface regardless of its contents.
+
+export type AudioFormat = "mp3" | "flac" | "aac";
+export type AudioQuality = "low" | "medium" | "high";
+
+export const AUDIO_FORMATS: AudioFormat[] = ["mp3", "flac", "aac"];
+export const AUDIO_QUALITIES: AudioQuality[] = ["low", "medium", "high"];
+
+export function isAudioFormat(v: unknown): v is AudioFormat {
+  return typeof v === "string" && (AUDIO_FORMATS as string[]).includes(v);
+}
+
+export function isAudioQuality(v: unknown): v is AudioQuality {
+  return typeof v === "string" && (AUDIO_QUALITIES as string[]).includes(v);
+}
+
+export interface AudioSettings {
+  format: AudioFormat;
+  quality: AudioQuality;
+  /** Raw ffmpeg audio-encode args (e.g. "-c:a libmp3lame -b:a 128k"),
+   * overriding the format/quality preset when set. */
+  customArgs?: string;
+}
+
+export const DEFAULT_AUDIO_SETTINGS: AudioSettings = { format: "mp3", quality: "medium" };
+
+interface AudioPreset {
+  args: string[];
+  /** Shown as a tooltip on the quality buttons — spoken-word audio, roughly. */
+  estimate: string;
+}
+
+export const AUDIO_PRESETS: Record<AudioFormat, Record<AudioQuality, AudioPreset>> = {
+  mp3: {
+    low: { args: ["-c:a", "libmp3lame", "-b:a", "64k"], estimate: "~28 MB per hour of runtime" },
+    medium: { args: ["-c:a", "libmp3lame", "-b:a", "128k"], estimate: "~58 MB per hour of runtime" },
+    high: { args: ["-c:a", "libmp3lame", "-b:a", "256k"], estimate: "~115 MB per hour of runtime" },
+  },
+  aac: {
+    low: { args: ["-c:a", "aac", "-b:a", "48k"], estimate: "~22 MB per hour of runtime" },
+    medium: { args: ["-c:a", "aac", "-b:a", "96k"], estimate: "~43 MB per hour of runtime" },
+    high: { args: ["-c:a", "aac", "-b:a", "192k"], estimate: "~86 MB per hour of runtime" },
+  },
+  flac: {
+    low: {
+      args: ["-c:a", "flac", "-compression_level", "1"],
+      estimate: "~350–400 MB per hour (lossless — size depends on the source; this only trades encode speed)",
+    },
+    medium: {
+      args: ["-c:a", "flac", "-compression_level", "5"],
+      estimate: "~350–400 MB per hour (lossless — size depends on the source; this only trades encode speed)",
+    },
+    high: {
+      args: ["-c:a", "flac", "-compression_level", "8"],
+      estimate: "~350–400 MB per hour (lossless — slowest, marginally smallest)",
+    },
+  },
+};
+
+/** File extension the format encodes to — AAC goes in an .m4a container for
+ * broad player compatibility and proper metadata tag support. */
+export function audioExtension(format: AudioFormat): string {
+  return format === "aac" ? "m4a" : format;
+}
+
+/** Minimal shell-like tokenizer: splits on whitespace, but a single- or
+ * double-quoted run (even mid-token, e.g. `title="My Book"`) keeps its
+ * contents — including spaces — together as one argument, with the quotes
+ * themselves stripped. No escaping, globbing or variable expansion. Only
+ * decides argv boundaries for a user-edited args string — it is never passed
+ * through a shell, so this cannot introduce a shell-injection surface. */
+export function tokenizeArgs(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let hasToken = false;
+  let quote: '"' | "'" | null = null;
+
+  for (const ch of input) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      hasToken = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (hasToken) {
+        tokens.push(current);
+        current = "";
+        hasToken = false;
+      }
+      continue;
+    }
+    current += ch;
+    hasToken = true;
+  }
+  if (hasToken) tokens.push(current);
+  return tokens;
+}
+
+/** The actual ffmpeg args this settings object encodes to. */
+export function audioEncodeArgs(settings: AudioSettings): string[] {
+  if (settings.customArgs?.trim()) return tokenizeArgs(settings.customArgs);
+  return AUDIO_PRESETS[settings.format][settings.quality].args;
+}
+
+/** What the settings UI shows (and lets the user hand-edit) for these
+ * settings — the custom string verbatim, or the preset rendered as text. */
+export function audioArgsString(settings: AudioSettings): string {
+  if (settings.customArgs?.trim()) return settings.customArgs.trim();
+  return AUDIO_PRESETS[settings.format][settings.quality].args.join(" ");
 }
 
 export class Converter {
@@ -98,6 +227,7 @@ export class Converter {
   outputDir: string;
   activationBytes: string;
   force: boolean;
+  audioSettings: AudioSettings;
   private reporter: ProgressReporter;
 
   constructor(
@@ -106,6 +236,7 @@ export class Converter {
     activationBytes: string = config.activationBytes,
     reporter: ProgressReporter = consoleReporter,
     force: boolean = false,
+    audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS,
   ) {
     this.reporter = reporter;
     this.force = force;
@@ -118,6 +249,7 @@ export class Converter {
     // Activation bytes are only needed for legacy .aax files — .aaxc books
     // carry their own per-file voucher. Checked per book at convert time.
     this.activationBytes = activationBytes;
+    this.audioSettings = audioSettings;
 
     this.ensureOutputDirectory();
   }
@@ -181,7 +313,7 @@ export class Converter {
     return ["-activation_bytes", this.activationBytes];
   }
 
-  async convertAaxToMp3(aaxFile: string, outputFile: string, totalDurationMs?: number, asin?: string, voucherFile?: string): Promise<boolean> {
+  async convertAaxToAudio(aaxFile: string, outputFile: string, totalDurationMs?: number, asin?: string, voucherFile?: string): Promise<boolean> {
     let inputArgs: string[];
     try {
       inputArgs = this.decryptArgs(aaxFile, voucherFile);
@@ -191,7 +323,7 @@ export class Converter {
     }
 
     return new Promise((resolve) => {
-      this.reporter.log(`Converting ${path.basename(aaxFile)} to MP3`);
+      this.reporter.log(`Converting ${path.basename(aaxFile)} to ${this.audioSettings.format.toUpperCase()}`);
 
       const ffmpegProcess = spawn(
         "ffmpeg",
@@ -200,10 +332,7 @@ export class Converter {
           "-i",
           aaxFile,
           "-vn",
-          "-c:a",
-          "libmp3lame",
-          "-q:a",
-          config.mp3Quality,
+          ...audioEncodeArgs(this.audioSettings),
           "-y",
           outputFile,
         ],
@@ -266,13 +395,14 @@ export class Converter {
   }
 
   async splitIntoChapters(
-    mp3File: string,
+    sourceFile: string,
     chapterData: ChapterData,
     bookDir: string,
     asin?: string,
     tags?: { album?: string; artist?: string },
   ): Promise<boolean> {
     const chapters = this.flattenChapters(chapterData.content_metadata.chapter_info.chapters);
+    const ext = audioExtension(this.audioSettings.format);
 
     if (!fs.existsSync(bookDir)) {
       fs.mkdirSync(bookDir, { recursive: true });
@@ -289,7 +419,7 @@ export class Converter {
       );
       const outputFile = path.join(
         bookDir,
-        `${chapterNumber} - ${chapterTitle}.mp3`,
+        `${chapterNumber} - ${chapterTitle}.${ext}`,
       );
 
       const splitPct = Math.round(((i + 1) / chapters.length) * 100);
@@ -309,7 +439,7 @@ export class Converter {
       this.reporter.log(
         `  [${i + 1}/${chapters.length}] Splitting: ${chapterTitle}`,
       );
-      const success = await this.splitChapter(mp3File, outputFile, chapter, {
+      const success = await this.splitChapter(sourceFile, outputFile, chapter, {
         title: chapterTitle,
         track: `${i + 1}/${chapters.length}`,
         album: tags?.album,
@@ -345,7 +475,11 @@ export class Converter {
         for (const [key, value] of Object.entries(tags)) {
           if (value) metadataArgs.push("-metadata", `${key}=${value}`);
         }
-        if (metadataArgs.length > 0) metadataArgs.push("-id3v2_version", "3");
+        // ID3v2 versioning is an MP3-muxer-specific option; FLAC/M4A tag
+        // their own way and don't recognize this flag.
+        if (metadataArgs.length > 0 && this.audioSettings.format === "mp3") {
+          metadataArgs.push("-id3v2_version", "3");
+        }
       }
 
       const ffmpegProcess = spawn(
@@ -496,10 +630,13 @@ export class Converter {
       const bookDirName = this.getBookDirName(asin, bookTitle);
       const bookDir = path.join(this.outputDir, bookDirName);
 
-      const tempMp3 = path.join(this.outputDir, `temp_${asin}.mp3`);
+      const tempAudio = path.join(
+        this.outputDir,
+        `temp_${asin}.${audioExtension(this.audioSettings.format)}`,
+      );
       const totalDurationMs = chapterData.content_metadata.chapter_info.runtime_length_ms;
 
-      const conversionSuccess = await this.convertAaxToMp3(aaxFile, tempMp3, totalDurationMs, asin, voucherFile);
+      const conversionSuccess = await this.convertAaxToAudio(aaxFile, tempAudio, totalDurationMs, asin, voucherFile);
       if (!conversionSuccess) {
         this.reporter.bookDone?.(asin, false);
         return false;
@@ -507,7 +644,7 @@ export class Converter {
 
       const author = getAudiobookByAsin(asin)?.author || undefined;
       const splittingSuccess = await this.splitIntoChapters(
-        tempMp3,
+        tempAudio,
         chapterData,
         bookDir,
         asin,
@@ -518,8 +655,8 @@ export class Converter {
         fs.copyFileSync(bookCover, path.join(bookDir, `${bookDirName}.jpg`));
       }
 
-      if (fs.existsSync(tempMp3)) {
-        fs.unlinkSync(tempMp3);
+      if (fs.existsSync(tempAudio)) {
+        fs.unlinkSync(tempAudio);
         this.reporter.log("Cleaned up temporary file");
       }
 

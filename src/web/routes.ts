@@ -5,7 +5,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, getAllBooks } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
-import { Converter, findConvertedChapters, getBookDirName } from "../converter.ts";
+import {
+  Converter,
+  findConvertedChapters,
+  getBookDirName,
+  DEFAULT_AUDIO_SETTINGS,
+  isAudioFormat,
+  isAudioQuality,
+} from "../converter.ts";
 import {
   isOperationRunning,
   getActiveOperation,
@@ -45,6 +52,7 @@ import {
   currentUserName,
   userDirs,
   setColumnPrefs,
+  setAudioSettings,
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
@@ -127,7 +135,7 @@ function userListEntries() {
   return listUsers().map((u) => ({ name: u.name, hasPassword: userHasPassword(u) }));
 }
 
-/** Per-request paths and activation bytes: user-scoped or legacy config. */
+/** Per-request paths, activation bytes, and audio settings: user-scoped or legacy config. */
 function requestPaths() {
   const user = currentUser();
   if (user) {
@@ -136,12 +144,14 @@ function requestPaths() {
       targetDir: dirs.targetDir,
       outputDir: dirs.outputDir,
       activationBytes: user.activationBytes || config.activationBytes,
+      audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
     };
   }
   return {
     targetDir: config.targetDir,
     outputDir: config.outputDir,
     activationBytes: config.activationBytes,
+    audioSettings: DEFAULT_AUDIO_SETTINGS,
   };
 }
 
@@ -256,6 +266,7 @@ async function renderSettings(
     userNav: buildUserNav(),
     desktop: isDesktopMode(),
     operationRunning: currentOperationRunning(),
+    audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
     ...extra,
   });
   return status ? c.html(html, status as 400) : c.html(html);
@@ -387,6 +398,18 @@ routes.post("/user/settings", async (c) => {
     password: String(body.password || "") || undefined,
     removePassword: body.remove_password === "true",
   });
+
+  const format = body.audio_format;
+  const quality = body.audio_quality;
+  if (isAudioFormat(format) && isAudioQuality(quality)) {
+    const customEnabled = body.audio_custom_enabled === "true";
+    const customArgs = String(body.audio_args || "").trim();
+    setAudioSettings(user.name, {
+      format,
+      quality,
+      ...(customEnabled && customArgs ? { customArgs } : {}),
+    });
+  }
 
   return renderSettings(c, { message: "Settings saved" });
 });
@@ -773,6 +796,7 @@ routes.post("/library/download-all", async (c) => {
       paths.activationBytes,
       reporter,
       false,
+      paths.audioSettings,
     );
     await converter.convertAll(selectedAsins);
   };
@@ -820,6 +844,7 @@ routes.post("/convert/all", async (c) => {
       paths.activationBytes,
       reporter,
       force,
+      paths.audioSettings,
     );
 
     const ignoredAsins = getIgnoredAsins();
@@ -881,6 +906,7 @@ routes.post("/convert/:asin", async (c) => {
       paths.activationBytes,
       reporter,
       force,
+      paths.audioSettings,
     );
     const books = converter.findBookFiles();
     const book = books.find((b) => b.asin === asin);
@@ -986,6 +1012,7 @@ routes.post("/prepare/:asin", async (c) => {
       paths.activationBytes,
       reporter,
       false,
+      paths.audioSettings,
     );
     const book = converter.findBookFiles().find((b) => b.asin === asin);
     if (!book) {

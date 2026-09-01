@@ -3,7 +3,7 @@
 import { execSync } from "child_process";
 import { config } from "./src/config.ts";
 import { AudibleLibrary } from "./src/library.ts";
-import { Converter, findConvertedChapters } from "./src/converter.ts";
+import { Converter, findConvertedChapters, DEFAULT_AUDIO_SETTINGS } from "./src/converter.ts";
 import { consoleReporter } from "./src/progress.ts";
 import {
   closeDb,
@@ -97,6 +97,7 @@ Examples:
     getArg(args, "--activation-bytes") ||
     user?.activationBytes ||
     config.activationBytes;
+  const audioSettings = user?.audioSettings || DEFAULT_AUDIO_SETTINGS;
   const force = args.includes("--force");
 
   const run = user
@@ -132,7 +133,7 @@ Examples:
         break;
       }
       case "convert": {
-        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force);
+        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force, audioSettings);
         const asinArg = args.find((a) => a.match(/^[A-Z0-9]{10}$/));
         if (asinArg) {
           const books = converter.findBookFiles();
@@ -162,7 +163,7 @@ Examples:
         const library = new AudibleLibrary(targetDir);
         const newBooks = await library.sync(force);
         await library.downloadBooks(newBooks, force);
-        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force);
+        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force, audioSettings);
         await converter.convertAll();
         break;
       }
