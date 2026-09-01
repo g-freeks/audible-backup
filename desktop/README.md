@@ -12,6 +12,42 @@ for how this fits into the Flatpak work.
 | `icons/` | Scalable SVG plus rendered 128px and 256px PNGs |
 | `screenshots/` | Store screenshots, captured from the running app |
 
+## Development loop
+
+Three tiers, fastest first. Pick the cheapest one that can show the thing you
+changed.
+
+| | Command | Window | Sandbox | Engine |
+| --- | --- | --- | --- | --- |
+| **1** | `AUDIBLE_DESKTOP=1 npm run server` | no (use a browser) | no | your browser |
+| **2** | `./desktop/audible-backup` | yes | no | WebKitGTK |
+| **3** | `desktop/dev-run.sh` | yes | yes | WebKitGTK |
+
+Tier 3 runs the *installed* Flatpak against your working tree, so you keep the
+real permissions and portals without rebuilding. It bypasses packaging
+entirely, so anything touching the manifest — permissions, what lands in
+`/app` — still needs a real build:
+
+```bash
+flatpak-builder --user --install --force-clean build \
+  flatpak/io.github.g_freeks.audible_backup.yml
+flatpak/smoke-test.sh
+```
+
+Note tier 3 uses the app's real data directory, credentials included.
+
+## Screenshots of the real window
+
+```bash
+desktop/screenshot-window.sh [output.png] [--full] [--wait SECONDS]
+```
+
+The window is the one thing no test suite can show: it needs a display, a
+compositor and the real WebKitGTK. Linux has no single way to capture one, so
+the script tries `gnome-screenshot`, `spectacle`, `grim` and ImageMagick's
+`import` in turn, prints which it used, and names what to install if none are
+present.
+
 ## Running the shell from a checkout
 
 You need **gjs**, **GTK 4** and **WebKitGTK 6.0** on the system (on Debian and

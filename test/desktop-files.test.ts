@@ -267,3 +267,21 @@ describe("desktop shell", () => {
     );
   });
 });
+
+describe("developer scripts", () => {
+  // These cannot run in CI — one needs flatpak, the other a display — so what
+  // is checked is that they stay runnable and stay documented.
+  for (const script of ["dev-run.sh", "screenshot-window.sh"]) {
+    it(`ships ${script} as an executable bash script`, () => {
+      const file = path.join(DESKTOP, script);
+      assert.ok(fs.existsSync(file), `${script} is missing`);
+      assert.ok(fs.statSync(file).mode & 0o111, `${script} must be executable`);
+      assert.match(fs.readFileSync(file, "utf8"), /^#!\/usr\/bin\/env bash\n/);
+    });
+
+    it(`documents ${script}`, () => {
+      const readme = fs.readFileSync(path.join(DESKTOP, "README.md"), "utf8");
+      assert.ok(readme.includes(script), `${script} is undocumented`);
+    });
+  }
+});
