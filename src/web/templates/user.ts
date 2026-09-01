@@ -31,7 +31,7 @@ const formStyles = `
     .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
     .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
     .build-line { margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
-    .danger-zone { border-color: rgba(248, 113, 113, 0.4); }
+    .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
     .danger-zone h2 { color: var(--danger); }
   </style>
 `;

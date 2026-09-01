@@ -79,18 +79,38 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
   <script src="/static/sse.js"></script>
   <script src="/static/app.js" defer></script>
   <style>
+    /* Adwaita named colors (see libadwaita's colors.md): light by default,
+       overridden under prefers-color-scheme so the page follows the system
+       the same way a native GNOME app would. */
     :root {
-      --bg: #0f1117;
-      --surface: #1a1d28;
-      --surface2: #242836;
-      --border: #2e3345;
-      --text: #e1e4ed;
-      --text-muted: #8b90a0;
-      --accent: #6c8cff;
-      --accent-hover: #8ba4ff;
-      --success: #4ade80;
-      --warn: #fbbf24;
-      --danger: #f87171;
+      --bg: #fafafb;
+      --surface: #ffffff;
+      --surface2: #f3f3f4;
+      --view-bg: #ffffff;
+      --border: rgba(0, 0, 0, 0.09);
+      --text: rgba(0, 0, 0, 0.8);
+      --text-muted: rgba(0, 0, 0, 0.55);
+      --accent: #3584e4;
+      --accent-hover: #1c71d8;
+      --success: #2ec27e;
+      --warn: #e5a50a;
+      --danger: #e01b24;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #222226;
+        --surface: #303030;
+        --surface2: #383838;
+        --view-bg: #1e1e1e;
+        --border: rgba(255, 255, 255, 0.09);
+        --text: #ffffff;
+        --text-muted: rgba(255, 255, 255, 0.6);
+        --accent: #78aeed;
+        --accent-hover: #3584e4;
+        --success: #8ff0a4;
+        --warn: #f8e45c;
+        --danger: #ff7b63;
+      }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -146,9 +166,9 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       font-size: 0.75rem;
       font-weight: 600;
     }
-    .badge-success { background: rgba(74, 222, 128, 0.15); color: var(--success); }
-    .badge-warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
-    .badge-muted { background: rgba(139, 144, 160, 0.15); color: var(--text-muted); }
+    .badge-success { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+    .badge-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+    .badge-muted { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -167,7 +187,7 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     a.btn, a.dropdown-item { text-decoration: none; box-sizing: border-box; }
     .log-panel {
-      background: #0a0c10;
+      background: var(--view-bg);
       padding: 1rem;
       max-height: 300px;
       overflow-y: auto;
@@ -286,7 +306,7 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       0% { transform: translateX(-100%); }
       100% { transform: translateX(350%); }
     }
-    .badge-danger { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
+    .badge-danger { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
     .progress-bar-lg { height: 6px; margin-top: 0; }
     .progress-label { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; display: block; }
     #op-progress { margin-bottom: 0.5rem; }
@@ -390,7 +410,7 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     }
     .dropdown-item:hover { background: var(--surface2); }
     .dropdown-item.danger { color: var(--danger); }
-    .dropdown-item.danger:hover { background: rgba(248,113,113,0.1); }
+    .dropdown-item.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
     .topbar {
       display: flex;
       align-items: center;
