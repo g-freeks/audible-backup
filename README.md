@@ -37,19 +37,9 @@ Open http://localhost:3000 — you'll be asked to create the first user
 
 Credentials persist in the volume, so this is a one-time step per user.
 
-<details>
-<summary>Command-line alternative</summary>
-
-```bash
-docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/<name>/audible \
-  audible-backup audible quickstart
-```
-</details>
-
-Get the user's activation bytes with `audible activation-bytes` (same
-`AUDIBLE_CONFIG_DIR`) and paste them into the web UI under **Settings**.
-After that: sync, download, convert, and fetch results via each book's
-Download button. Additional users are added from the user menu in the top
+Activation bytes are only needed for legacy `.aax` files; if you have them,
+paste them into **Settings**. After that: sync, download, convert, and fetch
+results via each book's Download button. Additional users are added from the user menu in the top
 bar; switching users is a dropdown away.
 
 ### Environment variables
@@ -125,7 +115,8 @@ Python package, and is tested against vectors that package generated, so the
 PKCE sign-in, the signed API requests and the voucher decryption provably
 agree with it. The original Python helper is still in the repository: set
 `AUDIBLE_HELPER="python3 helper/audible_helper.py"` to use it instead, if you
-have the `audible` package installed.
+have the `audible` package installed. Neither the Docker image nor the Flatpak
+ships Python, so that path means running from a source checkout.
 
 ## Limitations
 

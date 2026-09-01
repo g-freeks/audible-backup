@@ -124,9 +124,9 @@ function audibleCard(audible: AudibleStatus): string {
   if (!audible.available) {
     return `<div class="auth-card">
       <h2>Audible account</h2>
-      <p class="hint">Sign-in from the browser needs the Python <code>audible</code>
-      package, which is not available here. Use the command line instead:
-      <code>audible quickstart</code>.</p>
+      <p class="hint">The Audible client could not start. This only happens when
+      <code>AUDIBLE_HELPER</code> points at an external helper that fails to
+      run — unset it to use the built-in client.</p>
     </div>`;
   }
 

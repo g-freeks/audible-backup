@@ -87,4 +87,4 @@ All config is in `.env` (see `.env.example`). Key variables: `AUDIBLE_ACTIVATION
 
 ## Docker
 
-The intended deployment is fully sandboxed: `docker-compose.yml` uses a single **named Docker volume** (`users`, mounted at `/data/users`) — no host bind mounts. Each user's data lives under `/data/users/<name>`. The container runs the web server, and users retrieve their books through the web UI's download endpoints rather than from the host filesystem. Audible login per user: `docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/<name>/audible audible-backup audible quickstart`.
+The intended deployment is fully sandboxed: `docker-compose.yml` uses a single **named Docker volume** (`users`, mounted at `/data/users`) — no host bind mounts. Each user's data lives under `/data/users/<name>`. The container runs the web server, and users retrieve their books through the web UI's download endpoints rather than from the host filesystem. Audible sign-in happens in the web UI (**Settings → Connect Audible**); the image ships neither Python nor audible-cli.

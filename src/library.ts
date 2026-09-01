@@ -20,27 +20,27 @@ import {
 } from "./pyhelper.ts";
 
 /**
- * Turn an audible-cli failure into something actionable. Signing in is a
- * one-time command-line step (there is no web flow for it), so say so.
+ * Turn an audible-cli failure into something actionable.
+ *
+ * This path is only reached when AUDIBLE_HELPER points at an external helper
+ * that will not start; the built-in client handles everything otherwise. So
+ * the advice is to sign in through the UI, not to install Python tooling.
  */
 export function describeAudibleCliError(error: unknown): string {
   const text = String(error);
   const user = currentUserName();
-  const configHint = user
-    ? `docker compose exec -e AUDIBLE_CONFIG_DIR=/data/users/${user}/audible audible-backup audible quickstart`
-    : "docker compose exec audible-backup audible quickstart";
 
   if (/not found|ENOENT/i.test(text)) {
     return (
-      "audible-cli is not installed or not on PATH. It ships with the Docker " +
-      "image; if you are running outside Docker, install it with " +
-      "'pipx install audible-cli'."
+      "audible-cli is not installed or not on PATH. It is no longer needed — " +
+      "sign in from Settings → Connect Audible instead. If you really want the " +
+      "command-line path, install it with 'pipx install audible-cli'."
     );
   }
   if (/auth|login|profile|config|credential|unauthorized|401/i.test(text)) {
     return (
       `Audible sign-in required${user ? ` for user '${user}'` : ""}. ` +
-      `Signing in is a one-time command-line step:\n  ${configHint}`
+      "Open Settings and use Connect Audible."
     );
   }
   return `Failed to get library list: ${text}`;
