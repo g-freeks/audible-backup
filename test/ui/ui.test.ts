@@ -62,14 +62,6 @@ describe("library page in a browser", () => {
     assert.equal(await header.getAttribute("aria-sort"), "descending");
   });
 
-  it("toggles status filter pills", async () => {
-    const pill = ui.page.locator('.filter-btn[data-status="converted"]');
-    await pill.click();
-    assert.equal(await pill.getAttribute("aria-pressed"), "false");
-    assert.equal(await ui.page.locator("#books-table tbody tr:visible").count(), 2);
-    await pill.click();
-    assert.equal(await pill.getAttribute("aria-pressed"), "true");
-  });
 });
 
 describe("operation log", () => {

@@ -7,17 +7,16 @@ import {
   getDb,
   closeDb,
   markDownloaded,
-  markConverted,
   isDownloaded,
-  isConverted,
   getDownloadedAsins,
-  getConvertedAsins,
   getAllAudiobooks,
+  getAllBooks,
   getAllIgnoredBooks,
   importExistingDownloads,
   ignoreBook,
   unignoreBook,
   isIgnored,
+  upsertBook,
 } from "../src/db.ts";
 
 let tmpDir: string;
@@ -80,53 +79,26 @@ describe("markDownloaded", () => {
   });
 });
 
-describe("markConverted", () => {
-  it("updates conversion fields on an existing record", () => {
-    markDownloaded("B001234567", "Author", "Title", "/path/file.aax");
-    markConverted("B001234567", "/output/dir", 15);
-    assert.ok(isConverted("B001234567"));
-    const all = getAllAudiobooks();
-    assert.equal(all[0].output_path, "/output/dir");
-    assert.equal(all[0].chapter_count, 15);
-  });
-
-  it("does nothing for nonexistent ASIN", () => {
-    markConverted("ZZZZZZZZZZ", "/output/dir", 5);
-    assert.ok(!isConverted("ZZZZZZZZZZ"));
-  });
-});
-
-describe("isDownloaded / isConverted", () => {
+describe("isDownloaded", () => {
   it("returns false for unknown ASIN", () => {
     assert.ok(!isDownloaded("B000000000"));
-    assert.ok(!isConverted("B000000000"));
   });
 
-  it("isConverted returns false for downloaded-only book", () => {
+  it("returns true after download", () => {
     markDownloaded("B001234567", "A", "T", "/p.aax");
-    assert.ok(!isConverted("B001234567"));
-  });
-
-  it("both return true after download and conversion", () => {
-    markDownloaded("B001234567", "A", "T", "/p.aax");
-    markConverted("B001234567", "/out", 10);
     assert.ok(isDownloaded("B001234567"));
-    assert.ok(isConverted("B001234567"));
   });
 });
 
-describe("getDownloadedAsins / getConvertedAsins", () => {
-  it("returns empty sets for empty database", () => {
+describe("getDownloadedAsins", () => {
+  it("returns an empty set for an empty database", () => {
     assert.equal(getDownloadedAsins().size, 0);
-    assert.equal(getConvertedAsins().size, 0);
   });
 
-  it("returns correct sets after multiple inserts", () => {
+  it("returns downloaded ASINs after inserts", () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     markDownloaded("B000000002", "A2", "T2", "/b.aax");
-    markConverted("B000000001", "/out", 5);
     assert.equal(getDownloadedAsins().size, 2);
-    assert.equal(getConvertedAsins().size, 1);
   });
 });
 
@@ -139,13 +111,25 @@ describe("getAllAudiobooks", () => {
     const asins = all.map((r) => r.asin).sort();
     assert.deepEqual(asins, ["B000000001", "B000000002"]);
   });
+});
 
-  it("includes conversion data when present", () => {
+describe("getAllBooks ordering", () => {
+  it("sorts downloaded books first, most recently downloaded first", () => {
+    const d = getDb();
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
-    markConverted("B000000001", "/out/dir", 12);
-    const all = getAllAudiobooks();
-    assert.equal(all[0].chapter_count, 12);
-    assert.ok(all[0].converted_at);
+    d.prepare("UPDATE audiobooks SET downloaded_at = '2024-01-01T00:00:00' WHERE asin = ?").run("B000000001");
+    markDownloaded("B000000002", "A2", "T2", "/b.aax");
+    d.prepare("UPDATE audiobooks SET downloaded_at = '2024-06-01T00:00:00' WHERE asin = ?").run("B000000002");
+    const all = getAllBooks();
+    assert.deepEqual(all.map((b) => b.asin), ["B000000002", "B000000001"]);
+  });
+
+  it("lists not-yet-downloaded books after downloaded ones, alphabetically", () => {
+    markDownloaded("B000000001", "A1", "Downloaded Book", "/a.aax");
+    upsertBook("B000000002", "A2", "Zebra");
+    upsertBook("B000000003", "A3", "Alpha");
+    const all = getAllBooks();
+    assert.deepEqual(all.map((b) => b.asin), ["B000000001", "B000000003", "B000000002"]);
   });
 });
 
@@ -217,8 +201,8 @@ describe("getAllAudiobooks excludes ignored", () => {
   });
 });
 
-describe("getDownloadedAsins / getConvertedAsins exclude ignored", () => {
-  it("getDownloadedAsins excludes ignored books", () => {
+describe("getDownloadedAsins excludes ignored", () => {
+  it("does not include ignored books", () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     markDownloaded("B000000002", "A2", "T2", "/b.aax");
     ignoreBook("B000000001");
@@ -226,17 +210,6 @@ describe("getDownloadedAsins / getConvertedAsins exclude ignored", () => {
     assert.equal(downloaded.size, 1);
     assert.ok(downloaded.has("B000000002"));
     assert.ok(!downloaded.has("B000000001"));
-  });
-
-  it("getConvertedAsins excludes ignored books", () => {
-    markDownloaded("B000000001", "A1", "T1", "/a.aax");
-    markConverted("B000000001", "/out", 5);
-    markDownloaded("B000000002", "A2", "T2", "/b.aax");
-    markConverted("B000000002", "/out2", 3);
-    ignoreBook("B000000001");
-    const converted = getConvertedAsins();
-    assert.equal(converted.size, 1);
-    assert.ok(converted.has("B000000002"));
   });
 });
 

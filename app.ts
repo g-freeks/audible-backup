@@ -3,14 +3,13 @@
 import { execSync } from "child_process";
 import { config } from "./src/config.ts";
 import { AudibleLibrary } from "./src/library.ts";
-import { Converter } from "./src/converter.ts";
+import { Converter, findConvertedChapters } from "./src/converter.ts";
 import { consoleReporter } from "./src/progress.ts";
 import {
   closeDb,
   resetDatabase,
   getAllAudiobooks,
   getDownloadedAsins,
-  getConvertedAsins,
   getAllIgnoredBooks,
   getAudiobookByAsin,
   ignoreBook,
@@ -174,25 +173,30 @@ Examples:
       }
       case "db-status": {
         const downloaded = getDownloadedAsins();
-        const converted = getConvertedAsins();
         const all = getAllAudiobooks();
         const ignored = getAllIgnoredBooks();
+        let convertedCount = 0;
 
         console.log(`\nDatabase Status (${config.dbPath}):`);
         console.log(`Total tracked: ${all.length}`);
         console.log(`Downloaded: ${downloaded.size}`);
-        console.log(`Converted: ${converted.size}`);
-        console.log(`Ignored: ${ignored.length}`);
 
         if (all.length > 0) {
           console.log(`\nAudiobooks:`);
           for (const book of all) {
-            const status = book.converted_at ? "converted" : "downloaded";
+            let status = "not-downloaded";
+            if (book.downloaded_at) {
+              const converted = findConvertedChapters(outputDir, book.asin, book.title || "").length > 0;
+              if (converted) convertedCount++;
+              status = converted ? "converted" : "downloaded";
+            }
             const title = book.title || book.asin;
             const author = book.author ? `${book.author}: ` : "";
             console.log(`  [${status}] ${author}${title} (${book.asin})`);
           }
         }
+        console.log(`Converted: ${convertedCount}`);
+        console.log(`Ignored: ${ignored.length}`);
 
         if (ignored.length > 0) {
           console.log(`\nIgnored:`);

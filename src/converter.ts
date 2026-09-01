@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { config } from "./config.ts";
-import { isConverted, markConverted, getIgnoredAsins, getAudiobookByAsin } from "./db.ts";
+import { getIgnoredAsins, getAudiobookByAsin } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 import { operationSignal } from "./operations.ts";
 
@@ -63,6 +63,36 @@ export function parseVoucher(json: string): AaxcVoucher {
   return { key, iv };
 }
 
+export function sanitizeFilename(filename: string): string {
+  return filename
+    .replace(/[<>:"/\\|?*]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function getBookDirName(asin: string, bookTitle: string): string {
+  if (bookTitle) {
+    return sanitizeFilename(bookTitle);
+  }
+  return sanitizeFilename(`Book_${asin}`);
+}
+
+/**
+ * A book's own asin+title deterministically names its output directory
+ * (see getBookDirName), so "is this converted" is a direct filesystem check
+ * against a known path rather than a stored DB flag — no title-matching
+ * against unknown files involved.
+ */
+export function findConvertedChapters(
+  outputDir: string,
+  asin: string,
+  title: string,
+): string[] {
+  const bookDir = path.join(outputDir, getBookDirName(asin, title));
+  if (!fs.existsSync(bookDir)) return [];
+  return fs.readdirSync(bookDir).filter((f) => f.endsWith(".mp3"));
+}
+
 export class Converter {
   sourceDir: string;
   outputDir: string;
@@ -100,10 +130,7 @@ export class Converter {
   }
 
   sanitizeFilename(filename: string): string {
-    return filename
-      .replace(/[<>:"/\\|?*]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return sanitizeFilename(filename);
   }
 
   flattenChapters(chapters: ChapterInfo[]): ChapterInfo[] {
@@ -439,10 +466,7 @@ export class Converter {
   }
 
   getBookDirName(asin: string, bookTitle: string): string {
-    if (bookTitle) {
-      return this.sanitizeFilename(bookTitle);
-    }
-    return this.sanitizeFilename(`Book_${asin}`);
+    return getBookDirName(asin, bookTitle);
   }
 
   async convertBook(
@@ -456,9 +480,9 @@ export class Converter {
     this.reporter.log(`\nProcessing book: ${asin}`);
     this.reporter.bookStart?.(asin);
 
-    if (!this.force && isConverted(asin)) {
+    if (!this.force && findConvertedChapters(this.outputDir, asin, bookTitle).length > 0) {
       this.reporter.log(
-        `Book already converted (per database): ${bookTitle || asin}`,
+        `Book already converted (output files exist): ${bookTitle || asin}`,
       );
       this.reporter.bookDone?.(asin, true);
       return true;
@@ -500,9 +524,6 @@ export class Converter {
       }
 
       if (splittingSuccess) {
-        const chapterCount =
-          this.flattenChapters(chapterData.content_metadata.chapter_info.chapters).length;
-        markConverted(asin, bookDir, chapterCount);
         this.reporter.log(`Successfully processed: ${bookDirName}`);
       }
 

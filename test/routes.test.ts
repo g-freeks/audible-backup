@@ -8,7 +8,6 @@ import { routes } from "../src/web/routes.ts";
 import {
   closeDb,
   markDownloaded,
-  markConverted,
   isIgnored,
   ignoreBook,
   getAllAudiobooks,
@@ -17,6 +16,13 @@ import {
   getAudiobookByAsin,
 } from "../src/db.ts";
 import { clearOperation, startOperation } from "../src/operations.ts";
+
+/** Creates the on-disk output directory + a chapter mp3 that makes a book "converted". */
+function markBookConverted(title: string): void {
+  const bookDir = path.join(process.env.AUDIBLE_OUTPUT_DIR!, title);
+  fs.mkdirSync(bookDir, { recursive: true });
+  fs.writeFileSync(path.join(bookDir, "01 - Chapter 1.mp3"), "fake mp3");
+}
 
 let tmpDir: string;
 let app: Hono;
@@ -115,10 +121,10 @@ describe("GET /", () => {
     assert.ok(html.includes("Ignore"));
   });
 
-  it("shows filter pills", async () => {
+  it("renders search input without status filter pills", async () => {
     const res = await app.request("/");
     const html = await res.text();
-    assert.ok(html.includes("filter-btn"));
+    assert.ok(!html.includes("filter-btn"), "status filter pills were removed");
     assert.ok(html.includes("search-input"));
   });
 });
@@ -155,7 +161,7 @@ describe("GET /api/status", () => {
   it("returns correct counts with data", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     markDownloaded("B000000002", "A2", "T2", "/b.aax");
-    markConverted("B000000001", "/out", 5);
+    markBookConverted("T1");
     const res = await app.request("/api/status");
     const data = await res.json();
     assert.equal(data.total, 2);
@@ -296,7 +302,6 @@ describe("POST /api/unignore/:asin", () => {
 describe("POST /api/delete/:asin", () => {
   it("resets DB fields and redirects to /", async () => {
     markDownloaded("B000000001", "A1", "T1", "/nonexistent.aax");
-    markConverted("B000000001", "/nonexistent/out", 5);
 
     const res = await app.request("/api/delete/B000000001", {
       method: "POST",
@@ -308,10 +313,7 @@ describe("POST /api/delete/:asin", () => {
     const book = getAudiobookByAsin("B000000001");
     assert.ok(book);
     assert.equal(book.downloaded_at, null);
-    assert.equal(book.converted_at, null);
     assert.equal(book.aax_path, null);
-    assert.equal(book.output_path, null);
-    assert.equal(book.chapter_count, null);
     // Title and author should be preserved
     assert.equal(book.author, "A1");
     assert.equal(book.title, "T1");
@@ -326,8 +328,7 @@ describe("POST /api/delete/:asin", () => {
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, "01.mp3"), "fake mp3");
 
-    markDownloaded("B000000001", "A1", "T1", aaxFile);
-    markConverted("B000000001", outputDir, 1);
+    markDownloaded("B000000001", "A1", "TestBook", aaxFile);
 
     await app.request("/api/delete/B000000001", {
       method: "POST",
@@ -380,17 +381,13 @@ describe("POST /library/download", () => {
 // --- deleteBook DB function ---
 
 describe("deleteBook", () => {
-  it("nulls out download/convert fields but preserves title/author", async () => {
+  it("nulls out download fields but preserves title/author", async () => {
     markDownloaded("B000000001", "Author", "Title", "/a.aax");
-    markConverted("B000000001", "/out", 10);
     deleteBook("B000000001");
     const book = getAudiobookByAsin("B000000001");
     assert.ok(book);
     assert.equal(book.downloaded_at, null);
-    assert.equal(book.converted_at, null);
     assert.equal(book.aax_path, null);
-    assert.equal(book.output_path, null);
-    assert.equal(book.chapter_count, null);
     assert.equal(book.author, "Author");
     assert.equal(book.title, "Title");
   });
@@ -473,7 +470,6 @@ describe("download endpoints", () => {
     fs.mkdirSync(bookDir, { recursive: true });
     fs.writeFileSync(path.join(bookDir, "01 - Intro.mp3"), "mp3 bytes");
     markDownloaded("B00DOWNLD1", "Author", "My Book", "/none.aax");
-    markConverted("B00DOWNLD1", bookDir, 1);
 
     const res = await app.request("/download/converted/B00DOWNLD1");
     assert.equal(res.status, 200);
@@ -924,7 +920,7 @@ describe("row actions are unambiguous", () => {
 
   it("links converted books straight at the ZIP with the same label", async () => {
     markDownloaded("B0STATE0003", "A", "Done", "/x.aaxc");
-    markConverted("B0STATE0003", "/out/Done", 3);
+    markBookConverted("Done");
     const html = await (await app.request("/")).text();
     assert.match(html, /href="\/download\/converted\/B0STATE0003"[^>]*>Get MP3s</);
   });

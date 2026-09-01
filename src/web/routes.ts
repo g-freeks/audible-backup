@@ -3,9 +3,9 @@ import { config } from "../config.ts";
 
 import * as fs from "fs";
 import * as path from "path";
-import { getAllAudiobooks, getDownloadedAsins, getConvertedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, isConverted, ignoreBook, unignoreBook, deleteBook, resetDatabase } from "../db.ts";
+import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, getAllBooks } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
-import { Converter } from "../converter.ts";
+import { Converter, findConvertedChapters, getBookDirName } from "../converter.ts";
 import {
   isOperationRunning,
   getActiveOperation,
@@ -402,7 +402,13 @@ routes.get("/", (c) => {
   } catch {
     // activation bytes or target dir may not be configured
   }
-  return c.html(booksPage(convertibleAsins, buildUserNav()));
+  const convertedAsins = new Map<string, number>();
+  for (const book of getAllBooks()) {
+    if (!book.downloaded_at) continue;
+    const chapters = findConvertedChapters(paths.outputDir, book.asin, book.title || "");
+    if (chapters.length > 0) convertedAsins.set(book.asin, chapters.length);
+  }
+  return c.html(booksPage(convertibleAsins, convertedAsins, buildUserNav()));
 });
 routes.get("/library", (c) => c.redirect("/"));
 routes.get("/convert", (c) => c.redirect("/"));
@@ -410,14 +416,21 @@ routes.get("/convert", (c) => c.redirect("/"));
 // --- JSON API ---
 
 routes.get("/api/status", (c) => {
+  const paths = requestPaths();
   const all = getAllAudiobooks();
   const downloaded = getDownloadedAsins();
-  const converted = getConvertedAsins();
+  let convertedCount = 0;
+  for (const asin of downloaded) {
+    const book = getAudiobookByAsin(asin);
+    if (book && findConvertedChapters(paths.outputDir, asin, book.title || "").length > 0) {
+      convertedCount++;
+    }
+  }
   return c.json({
     total: all.length,
     downloaded: downloaded.size,
-    converted: converted.size,
-    pending: downloaded.size - converted.size,
+    converted: convertedCount,
+    pending: downloaded.size - convertedCount,
   });
 });
 
@@ -468,8 +481,9 @@ routes.post("/api/delete/:asin", (c) => {
       }
     }
     // Delete output directory
-    if (book.output_path && fs.existsSync(book.output_path)) {
-      fs.rmSync(book.output_path, { recursive: true, force: true });
+    const bookDir = path.join(requestPaths().outputDir, getBookDirName(asin, book.title || ""));
+    if (fs.existsSync(bookDir)) {
+      fs.rmSync(bookDir, { recursive: true, force: true });
     }
     // Reset DB fields
     deleteBook(asin);
@@ -493,16 +507,18 @@ routes.get("/download/converted/:asin", (c) => {
   if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
 
   const book = getAudiobookByAsin(asin);
-  if (!book?.converted_at || !book.output_path || !fs.existsSync(book.output_path)) {
+  const paths = requestPaths();
+  const bookDir = book ? path.join(paths.outputDir, getBookDirName(asin, book.title || "")) : "";
+  if (!book || findConvertedChapters(paths.outputDir, asin, book.title || "").length === 0) {
     return c.text("No converted files for this book", 404);
   }
 
-  const entries = zipDirectoryEntries(book.output_path);
+  const entries = zipDirectoryEntries(bookDir);
   if (entries.length === 0) {
     return c.text("No converted files for this book", 404);
   }
 
-  const zipName = `${path.basename(book.output_path)}.zip`;
+  const zipName = `${path.basename(bookDir)}.zip`;
   const body = Readable.toWeb(
     Readable.from(zipStream(entries)),
   ) as ReadableStream;
@@ -668,7 +684,10 @@ routes.post("/convert/all", async (c) => {
     );
 
     const ignoredAsins = getIgnoredAsins();
-    const queuedBooks = converter.findBookFiles().filter((b) => !ignoredAsins.has(b.asin) && (force || !isConverted(b.asin)));
+    const queuedBooks = converter.findBookFiles().filter((b) =>
+      !ignoredAsins.has(b.asin) &&
+      (force || findConvertedChapters(paths.outputDir, b.asin, b.bookTitle).length === 0)
+    );
     const oobSwaps = queuedBooks.map((b) => queuedSwap(b.asin)).join("");
 
     converter
@@ -819,30 +838,31 @@ routes.post("/prepare/:asin", async (c) => {
       if (!ok) throw new Error("Could not download this book from Audible");
     }
 
-    if (!isConverted(asin)) {
-      const converter = new Converter(
-        paths.targetDir,
-        paths.outputDir,
-        paths.activationBytes,
-        reporter,
-        false,
+    // convertBook itself is a cheap no-op if the book's output directory
+    // already has chapter files, so no need to pre-check here — that also
+    // avoids guessing at a title before we've resolved the actual filename.
+    const converter = new Converter(
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
+      reporter,
+      false,
+    );
+    const book = converter.findBookFiles().find((b) => b.asin === asin);
+    if (!book) {
+      throw new Error(
+        "Downloaded files for this book were not found, so it cannot be converted",
       );
-      const book = converter.findBookFiles().find((b) => b.asin === asin);
-      if (!book) {
-        throw new Error(
-          "Downloaded files for this book were not found, so it cannot be converted",
-        );
-      }
-      const ok = await converter.convertBook(
-        book.aaxFile,
-        book.chapterFile,
-        book.asin,
-        book.bookTitle,
-        book.bookCover,
-        book.voucherFile,
-      );
-      if (!ok) throw new Error("Conversion failed");
     }
+    const ok = await converter.convertBook(
+      book.aaxFile,
+      book.chapterFile,
+      book.asin,
+      book.bookTitle,
+      book.bookCover,
+      book.voucherFile,
+    );
+    if (!ok) throw new Error("Conversion failed");
   };
 
   run()
