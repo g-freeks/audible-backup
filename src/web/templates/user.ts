@@ -7,6 +7,14 @@ export interface UserListEntry {
   hasPassword: boolean;
 }
 
+/** Shown as a tooltip wherever the activation bytes field appears — the term
+ * means nothing on its own, and AAXC users (the default via Connect Audible)
+ * never need to fill it in at all. */
+const ACTIVATION_BYTES_HINT =
+  "A decryption key tied to your Audible account/device. Only needed for " +
+  "legacy .aax downloads — AAXC downloads (via Connect Audible) use a " +
+  "per-file key instead and don't need this.";
+
 const formStyles = `
   <style>
     .auth-wrap { max-width: 420px; margin: 3rem auto; }
@@ -75,8 +83,8 @@ export function loginPage(users: UserListEntry[], error?: string, preselect?: st
           <input id="add-name" name="name" pattern="[a-zA-Z0-9_\\-]{1,32}" placeholder="e.g. alice" required>
           <label for="add-password">Password <span class="hint">(optional)</span></label>
           <input id="add-password" name="password" type="password" autocomplete="new-password">
-          <label for="add-bytes">Audible activation bytes <span class="hint">(optional, can be set later in Settings)</span></label>
-          <input id="add-bytes" name="activation_bytes" placeholder="e.g. 1a2b3c4d">
+          <label for="add-bytes" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">Audible activation bytes <span class="hint">(optional, can be set later in Settings)</span></label>
+          <input id="add-bytes" name="activation_bytes" placeholder="e.g. 1a2b3c4d" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">
           <button class="btn btn-primary" type="submit">Create user</button>
         </form>
       </div>
@@ -194,8 +202,8 @@ export function settingsPage(view: SettingsView): string {
       ${audibleCard(view.audible)}
       <div class="auth-card">
         <form method="post" action="/user/settings">
-          <label for="set-bytes">Audible activation bytes</label>
-          <input id="set-bytes" name="activation_bytes" value="${escapeHtml(activationBytes)}" placeholder="e.g. 1a2b3c4d">
+          <label for="set-bytes" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">Audible activation bytes</label>
+          <input id="set-bytes" name="activation_bytes" value="${escapeHtml(activationBytes)}" placeholder="e.g. 1a2b3c4d" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">
           ${desktop ? "" : `
           <label for="set-password">New password <span class="hint">(leave blank to keep ${hasPassword ? "current password" : "no password"})</span></label>
           <input id="set-password" name="password" type="password" autocomplete="new-password">`}
