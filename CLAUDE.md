@@ -51,15 +51,16 @@ npm run db-reset      # Reset the database
   `node scripts/capture-screenshots.mjs` and committed. `test/desktop-files.test.ts`
   checks that the app ID, icon sizes and screenshot URLs stay in sync. There is
   no gjs in the dev container, so the shell itself cannot be run here.
-- **Flatpak packaging** (`flatpak/`) — the manifest plus two generated module
-  files listing every npm and PyPI dependency as a pinned URL with a checksum
-  (Flathub builds have no network). Regenerate with
-  `python3 scripts/generate-flatpak-sources.py` and commit the result;
-  `test/flatpak.test.ts` fails if they drift from `package-lock.json`. ffmpeg
-  and python3 come from the runtime — no extensions are declared.
+- **Flatpak packaging** (`flatpak/`) — the manifest plus a generated module
+  file listing every npm dependency as a pinned URL with a checksum (Flathub
+  builds have no network). Regenerate with
+  `node scripts/generate-flatpak-sources.mjs` and commit the result;
+  `test/flatpak.test.ts` fails if it drifts from `package-lock.json`. ffmpeg
+  comes from the runtime — no extensions are declared, and no Python ships.
 - `users.ts` — Multi-tenant user registry (`users.json` under `USERS_DIR`). Each user has an isolated data directory (`aax/`, `converted/`, `audible/`, `audiobooks.db`), optional scrypt-hashed password, and optional per-user activation bytes. The current user travels through async call chains via `AsyncLocalStorage` (`runWithUser`/`currentUser`), which is how `db.ts` and the audible-cli wrappers resolve per-user paths without explicit parameters. With zero registered users the app runs in legacy single-user mode driven by env config.
 - `db.ts` — SQLite database with a single `audiobooks` table tracking download/conversion state by ASIN. Keeps one lazy connection per database file; the path resolves to the current user's DB in multi-tenant mode, else `DB_PATH`/config.
-- `pyhelper.ts` — Spawns `helper/audible_helper.py` (JSON-over-stdout bridge to the `audible` Python package) for structured library listings, AAXC downloads with decryption vouchers, and the two-step Audible sign-in (`login-url`, `login-complete`, `login-status`). Throws `HelperUnavailableError` when python3/the package is missing so callers can fall back to audible-cli.
+- `audible/` — the Audible client, in TypeScript: marketplaces, PKCE sign-in and device registration (`login.ts`), credential storage and ADP request signing (`auth.ts`), the API and licence-voucher decryption (`client.ts`), and the commands the app uses (`commands.ts`). Ported from the `audible` Python package; `test/audible.test.ts` checks it against vectors that package generated (`scripts/generate-audible-vectors.py`).
+- `pyhelper.ts` — Dispatches those commands and returns the same JSON events the old Python helper did, so callers did not change. Setting `AUDIBLE_HELPER` still routes to an external process, which is how tests drive a fake helper.
 - `library.ts` — `AudibleLibrary` lists and downloads books: helper-first (AAXC + voucher + chapters + cover), falling back to `audible-cli` (AAX) when the helper is unavailable. Auto-imports existing `.aax`/`.aaxc` files into the DB on construction.
 - `converter.ts` — `Converter` class uses `ffmpeg` to decrypt AAX→MP3 (activation bytes) or AAXC→MP3 (voucher key/iv via `-audible_key`/`-audible_iv`), then splits by chapters using JSON chapter metadata. Activation bytes are only required for `.aax` inputs, checked per book at convert time.
 - `progress.ts` — `ProgressReporter` interface with two implementations: `consoleReporter` (for CLI) and `EventReporter` (EventEmitter for web SSE streaming).

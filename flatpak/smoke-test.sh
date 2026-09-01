@@ -8,11 +8,9 @@
 #
 # The unit and browser suites already cover the application. What they cannot
 # see is whether the *sandbox* is right: whether the runtime really carries an
-# ffmpeg that can do this job, whether the Pillow wheel pinned in the manifest
-# matches the runtime's Python, whether the shell's GTK and WebKit versions
-# resolve, and whether the app runs from the layout the manifest installs.
-#
-# Every check here is one of the assumptions phase 3 could not verify.
+# ffmpeg that can do this job, whether the Audible client loads under the
+# bundled Node, whether the shell's GTK and WebKit versions resolve, and
+# whether the app runs from the layout the manifest installs.
 
 set -euo pipefail
 
@@ -46,29 +44,25 @@ else
   fail "no ffmpeg in the runtime — the manifest needs an ffmpeg module after all"
 fi
 
-step "the vendored Python stack imports under the runtime's interpreter"
-# This is where a wrong Pillow pin shows up: the wheel is tied to one CPython
-# version, so if the runtime moved, PIL is the import that fails.
-if in_app python3 -c '
-import sys
-import audible, PIL
-from audible.login import build_oauth_url, create_code_verifier, extract_code_from_url
-from audible.register import register
-from audible.aescipher import decrypt_voucher_from_licenserequest
-from audible.localization import Locale
-print(f"   python {sys.version.split()[0]}, audible {audible.__version__}, pillow {PIL.__version__}")
+step "the Audible client loads under the bundled Node"
+# The client is TypeScript now — there is no Python in the sandbox at all.
+if in_app /app/bin/node --input-type=module -e '
+import { getLocale, MARKETPLACES } from "/app/share/audible-backup/src/audible/locale.ts";
+import { buildOAuthUrl } from "/app/share/audible-backup/src/audible/login.ts";
+const { url } = buildOAuthUrl(getLocale("de"));
+if (!url.startsWith("https://www.amazon.de/ap/signin?")) throw new Error("bad sign-in url");
+console.log(`   ${MARKETPLACES.length} marketplaces, sign-in URL builds`);
 ' 2>&1; then
-  pass "audible, Pillow and every symbol the helper imports"
+  pass "the Audible client loads and builds a sign-in URL"
 else
-  fail "the vendored Python packages do not import — check the Pillow wheel's cp tag"
+  fail "the Audible client does not load — type stripping or a bad import"
 fi
 
-step "the helper answers on its own protocol"
-if in_app python3 /app/share/audible-backup/helper/audible_helper.py login-status \
-    | grep -q '"ok": true'; then
-  pass "helper reports a usable, unlinked Audible config"
+step "no Python ships in the bundle"
+if in_app sh -c '[ ! -d /app/lib/audible-python ]'; then
+  pass "the vendored Python packages are gone"
 else
-  fail "helper did not return a well-formed status"
+  fail "/app/lib/audible-python still exists"
 fi
 
 step "the shell's toolkit is present"

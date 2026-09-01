@@ -1,22 +1,25 @@
 import { spawn } from "child_process";
-import * as path from "path";
 import { currentUserName, userDirs } from "./users.ts";
 import { operationSignal } from "./operations.ts";
+import * as path from "node:path";
+import { desktopPaths, isDesktopMode } from "./config.ts";
+import * as commands from "./audible/commands.ts";
+import { CommandError, type HelperEvent } from "./audible/commands.ts";
 
 /**
- * Wrapper around helper/audible_helper.py — a JSON-over-stdout bridge to the
- * `audible` Python package. Used for structured library listings and AAXC
- * downloads with decryption vouchers. When the helper (or its Python
- * dependency) is unavailable, callers fall back to the audible-cli path.
+ * The Audible bridge.
+ *
+ * This used to spawn a Python helper built on the `audible` package. That
+ * client is now implemented in TypeScript (`src/audible/`), so the default
+ * path needs no Python at all. The command names and JSON event shape are
+ * unchanged, so callers did not have to move with it.
+ *
+ * Setting AUDIBLE_HELPER still routes through an external process, which is
+ * how the tests drive a fake helper — and how anyone who needs the old Python
+ * implementation back can have it.
  */
 
-export interface HelperEvent {
-  type: string;
-  ok?: boolean;
-  reason?: string;
-  message?: string;
-  [key: string]: unknown;
-}
+export type { HelperEvent };
 
 export interface HelperLibraryItem {
   asin: string;
@@ -25,36 +28,75 @@ export interface HelperLibraryItem {
   downloadable: boolean;
 }
 
-/** Thrown when the helper can't run at all (no python3, missing package). */
+/** Thrown when the Audible client cannot run at all. */
 export class HelperUnavailableError extends Error {}
 
-const HELPER_PATH = path.resolve(import.meta.dirname, "..", "helper", "audible_helper.py");
-
-function helperCommand(): string[] {
-  // Test hook: AUDIBLE_HELPER="python3 /path/to/fake_helper.py"
-  const override = process.env.AUDIBLE_HELPER;
-  if (override) return override.split(" ");
-  return ["python3", HELPER_PATH];
-}
-
-function helperEnv(): NodeJS.ProcessEnv {
+/** Where this user's Audible credentials live. */
+function configDir(): string {
   const userName = currentUserName();
-  if (userName) {
-    return { ...process.env, AUDIBLE_CONFIG_DIR: userDirs(userName).authDir };
-  }
-  return process.env;
+  if (userName) return userDirs(userName).authDir;
+  if (process.env.AUDIBLE_CONFIG_DIR) return process.env.AUDIBLE_CONFIG_DIR;
+  // Legacy single-user mode: the same default the Python helper used.
+  if (isDesktopMode()) return desktopPaths.authDir;
+  return path.join(process.env.HOME || "", ".audible");
 }
 
 export function runHelper(
   args: string[],
   onEvent?: (event: HelperEvent) => void,
 ): Promise<HelperEvent> {
+  const override = process.env.AUDIBLE_HELPER;
+  if (override) return runExternalHelper(override, args, onEvent);
+  return runBuiltinHelper(args, onEvent);
+}
+
+async function runBuiltinHelper(
+  args: string[],
+  onEvent?: (event: HelperEvent) => void,
+): Promise<HelperEvent> {
+  const [command, ...rest] = args;
+  const emit = (event: HelperEvent) => onEvent?.(event);
+  const dir = configDir();
+
+  try {
+    switch (command) {
+      case "login-url":
+        return commands.loginUrl(rest[0]);
+      case "login-complete":
+        return await commands.loginComplete(rest[0], rest[1], rest[2], rest[3], dir);
+      case "login-status":
+        return commands.loginStatus(dir);
+      case "library":
+        return await commands.library(dir);
+      case "download":
+        return await commands.download(rest[0], rest[1], rest[2] || "", dir, emit);
+      default:
+        throw new CommandError("bad_args", `Unknown command: ${command}`);
+    }
+  } catch (err) {
+    if (operationSignal()?.aborted) throw new Error("Cancelled");
+    if (err instanceof CommandError) {
+      return { type: "done", ok: false, reason: err.reason, message: err.message };
+    }
+    throw err;
+  }
+}
+
+/**
+ * The original behaviour: spawn a process that speaks one JSON object per
+ * line on stdout. Retained for AUDIBLE_HELPER.
+ */
+function runExternalHelper(
+  override: string,
+  args: string[],
+  onEvent?: (event: HelperEvent) => void,
+): Promise<HelperEvent> {
   return new Promise((resolve, reject) => {
-    const [cmd, ...preArgs] = helperCommand();
+    const [cmd, ...preArgs] = override.split(" ");
     const signal = operationSignal();
     const proc = spawn(cmd, [...preArgs, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: helperEnv(),
+      env: { ...process.env, AUDIBLE_CONFIG_DIR: configDir() },
       signal,
     });
 

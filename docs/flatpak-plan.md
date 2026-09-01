@@ -1,6 +1,6 @@
 # Plan: distributing Audible Backup as a Flatpak
 
-Status: Phases 1–4 are implemented. Phases 5–6 are still a proposal.
+Status: Phases 1–4 and 6 are implemented. Phase 5 (Flathub) is parked.
 
 ## Goal
 
@@ -18,9 +18,9 @@ applications**: one window, one user, per-user data under
 permission it wants.
 
 Almost all of the work below follows from reconciling those two shapes. The good
-news is that the pieces that matter — the operation pipeline, the Python helper,
-the converter, the whole UI — are unaffected. What changes is the shell around
-them.
+news is that the pieces that matter — the operation pipeline, the Audible
+client, the converter, the whole UI — are unaffected. What changes is the shell
+around them.
 
 ## Architectural decisions
 
@@ -66,7 +66,7 @@ A stricter alternative is to keep everything sandboxed and export through the
 file-chooser portal. That is more idiomatic and less convenient; worth revisiting
 if Flathub reviewers object to the blanket `xdg-music` permission.
 
-### 4. Python stays, for now
+### 4. Python stayed, until phase 6
 
 The helper needs `audible` plus its transitive dependencies. Flathub builds have
 **no network access**, so every dependency must be declared as a source with a
@@ -76,7 +76,8 @@ The alternative — porting the Audible client to TypeScript and dropping Python
 entirely — would roughly halve the bundle and remove a whole runtime, but it
 means reimplementing PKCE login, device registration with RSA-signed ADP tokens,
 and AES voucher decryption. That is real cryptographic work and a poor thing to
-attempt in the same change as the packaging. Deferred to a later phase.
+attempt in the same change as the packaging. Deferred to a later phase —
+and done in phase 6, once the packaging was settled.
 
 `audible-cli` is **not** bundled: the helper covers everything the desktop build
 needs, and shipping a second Python entry point purely as a fallback is dead
@@ -100,8 +101,8 @@ existing basic-auth option is aimed at a different threat model.
 | --- | --- | --- |
 | Runtime | `node:24-bookworm-slim` image | `org.gnome.Platform` 50 + `org.freedesktop.Sdk.Extension.node24` at build time, Node binary copied into `/app` |
 | ffmpeg | apt package | Already in `org.gnome.Platform` — no extension, see Phase 3 |
-| npm deps | `npm ci` at build | Vendored from `package-lock.json` by `scripts/generate-flatpak-sources.py` (only `hono`, `@hono/node-server`, which have no transitive dependencies) |
-| Python deps | `pip install audible-cli` | 15 packages vendored from PyPI with checksums by the same script |
+| npm deps | `npm ci` at build | Vendored from `package-lock.json` by `scripts/generate-flatpak-sources.mjs` (only `hono`, `@hono/node-server`, which have no transitive dependencies) |
+| Python deps | `pip install audible-cli` | None — the Audible client is TypeScript as of Phase 6 |
 | Entry point | `node server.ts` | GJS shell → spawns `node server.ts` → WebKitGTK window |
 | Config | env vars, `.env` | XDG dirs, `FLATPAK_ID` detection; `.env` unused |
 | Users | multi-tenant | single-user (legacy mode), user UI hidden |
@@ -287,8 +288,40 @@ fetches the scripts rather than trusting that the page returned 200.
 - PR to `flathub/flathub` with the manifest
 - Address reviewer feedback
 
-**Phase 6 (optional) — drop Python**
-- Port the Audible client to TypeScript; removes a runtime and roughly halves the bundle
+**Phase 6 — drop Python** ✅ *done*
+- The Audible client is now TypeScript (`src/audible/`): marketplaces, PKCE
+  sign-in and device registration, credential storage and ADP request signing,
+  the API, and licence-voucher decryption
+- `pyhelper.ts` dispatches to it and returns the same JSON events the Python
+  helper did, so no caller changed
+- The Flatpak vendors no Python packages, declares no `PYTHONPATH`, and does
+  not ship the helper
+
+This was the phase with the least room for guessing: PKCE, the OAuth URL, the
+ADP signature and the voucher either match what Amazon expects exactly or fail
+in production, and none of it can be exercised without a real account. So the
+port is checked against the implementation it replaces.
+`scripts/generate-audible-vectors.py` runs the real `audible` package to
+produce `test/resources/audible-vectors.json`, and `test/audible.test.ts`
+holds the TypeScript to it:
+
+| Checked against Python | How |
+| --- | --- |
+| PKCE challenge, client id | same derivation from the same fixed inputs |
+| OAuth sign-in URL | byte-for-byte, four marketplaces, parameter order included |
+| ADP request signature | our signature verifies against the string *Python* signed |
+| RSA algorithm agreement | Node verifies a signature Python produced |
+| Signature date format | Python's odd `…+00:00Z` with microseconds, reproduced |
+| Licence voucher | we decrypt a voucher Python encrypted, and fail on any wrong input |
+
+The fixture records only a *public* key, so nothing secret is committed.
+
+What is **not** covered: device registration itself, which needs a live
+Amazon exchange. Existing sign-ins are unaffected — the credential file format
+is unchanged, so a library signed in through the Python helper keeps working —
+but the first new sign-in through the TypeScript path is the thing to watch.
+`helper/audible_helper.py` stays in the repository, and `AUDIBLE_HELPER` still
+routes to it, as an escape hatch for server installs.
 
 ## Risks and open questions
 
