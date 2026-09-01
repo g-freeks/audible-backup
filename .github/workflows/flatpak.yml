@@ -57,6 +57,13 @@ jobs:
           key: flatpak-builder-${{ hashFiles('flatpak/*.yml', 'flatpak/*.json') }}
           restore-keys: flatpak-builder-
 
+      # The manifest picks this up, so Settings can name the exact commit a
+      # bundle came from.
+      - name: Stamp the build
+        run: |
+          printf '{"build":"%s","commit":"%s"}\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${{ github.sha }}" > build-info.json
+
       # --install-deps-from resolves the runtime, the SDK and the node
       # extension at the branches the manifest actually needs, rather than
       # guessing them here.

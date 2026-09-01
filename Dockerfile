@@ -19,6 +19,11 @@ RUN npm ci --omit=dev
 
 COPY . .
 
+# Stamp the build so Settings can show which image is running.
+ARG BUILD_COMMIT=""
+RUN printf '{"build":"%s","commit":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BUILD_COMMIT" > build-info.json
+
 EXPOSE 3000
 
 CMD ["node", "server.ts"]

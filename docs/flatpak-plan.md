@@ -316,10 +316,10 @@ holds the TypeScript to it:
 
 The fixture records only a *public* key, so nothing secret is committed.
 
-What is **not** covered: device registration itself, which needs a live
-Amazon exchange. Existing sign-ins are unaffected — the credential file format
-is unchanged, so a library signed in through the Python helper keeps working —
-but the first new sign-in through the TypeScript path is the thing to watch.
+Device registration is the one part no vector can cover — it needs a live
+Amazon exchange. It has since been confirmed by hand: a **clean install** of
+the TypeScript build signed in successfully and downloaded a book, which
+exercises registration, the signed API requests and the voucher end to end.
 `helper/audible_helper.py` stays in the repository, and `AUDIBLE_HELPER` still
 routes to it, as an escape hatch for server installs.
 
