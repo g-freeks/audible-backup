@@ -347,19 +347,6 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     .search-clear:hover { color: var(--text); background: var(--surface2); }
     .search-clear[hidden] { display: none; }
     .filter-bar input:focus { border-color: var(--accent); }
-    .filter-pills { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-    .filter-btn {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      color: var(--text-muted);
-      padding: 0.25rem 0.7rem;
-      font-size: 0.8rem;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }
-    .filter-btn:hover { color: var(--text); border-color: var(--text-muted); }
-    .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { color: var(--text); }
     th.sortable::after { content: '⇅'; display: inline-block; margin-left: 0.3rem; font-size: 0.6rem; vertical-align: middle; opacity: 0.3; }

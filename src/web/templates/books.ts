@@ -3,12 +3,12 @@ import { getAllBooks, type AudiobookRow } from "../../db.ts";
 import { escapeHtml } from "./html.ts";
 import { statusBadge } from "./components.ts";
 
-function getStatus(book: AudiobookRow, convertibleAsins: Set<string>): string {
+function getStatus(book: AudiobookRow, convertibleAsins: Set<string>, convertedAsins: Map<string, number>): string {
   if (book.ignored_at) return "ignored";
   if (book.not_downloadable_at) return "not-downloadable";
   if (!book.downloaded_at) return "not-downloaded";
-  if (!book.converted_at && convertibleAsins.has(book.asin)) return "convertible";
-  if (!book.converted_at) return "downloaded";
+  if (!convertedAsins.has(book.asin) && convertibleAsins.has(book.asin)) return "convertible";
+  if (!convertedAsins.has(book.asin)) return "downloaded";
   return "converted";
 }
 
@@ -92,23 +92,10 @@ function actionButtons(book: AudiobookRow, status: string): string {
   return `<div class="action-dropdown"><div class="split-btn">${primary}<button class="btn btn-sm btn-primary split-caret" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false" aria-label="More actions">&#9662;</button></div><div class="dropdown-menu">${items.join("")}</div></div>`;
 }
 
-export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): string {
+export function booksPage(convertibleAsins: Set<string>, convertedAsins: Map<string, number>, userNav?: UserNav): string {
   const books = getAllBooks();
   const hasNotDownloaded = books.some((b) => !b.downloaded_at && !b.ignored_at && !b.not_downloadable_at);
 
-  const statusCounts: Record<string, number> = {};
-  books.forEach(book => {
-    const s = getStatus(book, convertibleAsins);
-    statusCounts[s] = (statusCounts[s] || 0) + 1;
-  });
-  const statusDefs = [
-    { value: "not-downloaded", label: "Not Downloaded" },
-    { value: "not-downloadable", label: "Not Downloadable" },
-    { value: "downloaded", label: "Downloaded" },
-    { value: "convertible", label: "Ready" },
-    { value: "converted", label: "Converted" },
-    { value: "ignored", label: "Ignored" },
-  ];
   const content = `
     <!-- Refresher lives OUTSIDE .library-layout on purpose: hx-select is an
          inherited attribute, so placing it on the container would apply it to
@@ -140,11 +127,6 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
           <input type="text" id="search-input" placeholder="Search by title, author, or ASIN..." autocomplete="off">
           <button type="button" id="search-clear" class="search-clear" aria-label="Clear search" hidden>&times;</button>
         </div>
-        <div class="filter-pills">
-          ${statusDefs.map(s =>
-            `<button class="filter-btn active" data-status="${s.value}" aria-pressed="true">${s.label} (${statusCounts[s.value] || 0})</button>`
-          ).join("\n          ")}
-        </div>
       </div>
 
       ${books.length > 0 ? `
@@ -164,14 +146,14 @@ export function booksPage(convertibleAsins: Set<string>, userNav?: UserNav): str
           </thead>
           <tbody>
             ${books.map((book) => {
-              const status = getStatus(book, convertibleAsins);
+              const status = getStatus(book, convertibleAsins, convertedAsins);
               const title = escapeHtml(book.title || book.asin);
               const author = escapeHtml(book.author || "");
               const date = book.downloaded_at ? new Date(book.downloaded_at + "Z").toLocaleDateString() : "";
               const dateSortVal = book.downloaded_at || "";
-              const chapters = book.chapter_count ?? "";
+              const chapters = convertedAsins.get(book.asin) ?? "";
               const searchData = `${title} ${author} ${book.asin}`.toLowerCase();
-              return `<tr data-status="${status}" data-search="${escapeHtml(searchData)}">
+              return `<tr data-search="${escapeHtml(searchData)}">
                 <td><input type="checkbox" name="asin" value="${book.asin}" aria-label="Select ${title}"></td>
                 <td data-sort-val="${escapeHtml(title.toLowerCase())}">${title}</td>
                 <td class="col-author" data-sort-val="${escapeHtml(author.toLowerCase())}" title="${author}">${author}</td>

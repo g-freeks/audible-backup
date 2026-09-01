@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { Converter, parseVoucher, type ChapterInfo, type ChapterData } from "../src/converter.ts";
+import { Converter, parseVoucher, findConvertedChapters, type ChapterInfo, type ChapterData } from "../src/converter.ts";
 import { closeDb } from "../src/db.ts";
 
 let dbDir: string;
@@ -79,6 +79,41 @@ describe("Converter.getBookDirName", () => {
 
   it("falls back to ASIN when title is empty", () => {
     assert.equal(converter.getBookDirName("B001234567", ""), "Book_B001234567");
+  });
+});
+
+describe("findConvertedChapters", () => {
+  it("returns empty array when the output directory doesn't exist", () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-fc-out-"));
+    assert.deepEqual(findConvertedChapters(outDir, "B001234567", "My Book"), []);
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("returns empty array when the book directory has no mp3s", () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-fc-out-"));
+    fs.mkdirSync(path.join(outDir, "My Book"));
+    fs.writeFileSync(path.join(outDir, "My Book", "cover.jpg"), "");
+    assert.deepEqual(findConvertedChapters(outDir, "B001234567", "My Book"), []);
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("lists mp3 chapter files when present", () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-fc-out-"));
+    fs.mkdirSync(path.join(outDir, "My Book"));
+    fs.writeFileSync(path.join(outDir, "My Book", "01 - Ch 1.mp3"), "");
+    fs.writeFileSync(path.join(outDir, "My Book", "02 - Ch 2.mp3"), "");
+    fs.writeFileSync(path.join(outDir, "My Book", "My Book.jpg"), "");
+    const chapters = findConvertedChapters(outDir, "B001234567", "My Book");
+    assert.equal(chapters.length, 2);
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("falls back to the ASIN-based directory when title is empty", () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-fc-out-"));
+    fs.mkdirSync(path.join(outDir, "Book_B001234567"));
+    fs.writeFileSync(path.join(outDir, "Book_B001234567", "01 - Ch 1.mp3"), "");
+    assert.equal(findConvertedChapters(outDir, "B001234567", "").length, 1);
+    fs.rmSync(outDir, { recursive: true, force: true });
   });
 });
 

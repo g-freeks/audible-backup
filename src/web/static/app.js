@@ -53,7 +53,7 @@
 
   function rows() {
     return Array.prototype.slice.call(
-      document.querySelectorAll("#books-table tbody tr[data-status]"),
+      document.querySelectorAll("#books-table tbody tr"),
     );
   }
 
@@ -67,14 +67,9 @@
     var input = document.getElementById("search-input");
     var query = input ? input.value.toLowerCase() : "";
     syncSearchClear();
-    var active = {};
-    document.querySelectorAll(".filter-btn.active[data-status]").forEach(function (btn) {
-      active[btn.dataset.status] = true;
-    });
     rows().forEach(function (row) {
       var matchesSearch = !query || row.dataset.search.indexOf(query) !== -1;
-      var matchesFilter = !!active[row.dataset.status];
-      row.style.display = matchesSearch && matchesFilter ? "" : "none";
+      row.style.display = matchesSearch ? "" : "none";
     });
   }
 
@@ -182,14 +177,6 @@
         applyFilters();
         searchInput.focus();
       }
-      return;
-    }
-
-    var pill = e.target.closest(".filter-btn[data-status]");
-    if (pill) {
-      pill.classList.toggle("active");
-      pill.setAttribute("aria-pressed", String(pill.classList.contains("active")));
-      applyFilters();
       return;
     }
 

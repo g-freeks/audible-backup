@@ -30,10 +30,7 @@ function initSchema(db: DatabaseSync): void {
             author TEXT,
             title TEXT,
             downloaded_at TEXT,
-            converted_at TEXT,
             aax_path TEXT,
-            output_path TEXT,
-            chapter_count INTEGER,
             ignored_at TEXT,
             not_downloadable_at TEXT
         )
@@ -46,6 +43,15 @@ function initSchema(db: DatabaseSync): void {
   }
   if (!cols.some((c) => c.name === "not_downloadable_at")) {
     db.exec("ALTER TABLE audiobooks ADD COLUMN not_downloadable_at TEXT");
+  }
+
+  // Migration: the DB used to track the whole download->convert pipeline.
+  // Conversion state is now derived from the filesystem instead (see
+  // converter.ts's findConvertedChapters), so drop those columns.
+  for (const col of ["converted_at", "output_path", "chapter_count"]) {
+    if (cols.some((c) => c.name === col)) {
+      db.exec(`ALTER TABLE audiobooks DROP COLUMN ${col}`);
+    }
   }
 }
 
@@ -98,23 +104,6 @@ export function markDownloaded(
   ).run(asin, author, title, aaxPath);
 }
 
-export function markConverted(
-  asin: string,
-  outputPath: string,
-  chapterCount: number,
-): void {
-  const d = getDb();
-  d.prepare(
-    `
-        UPDATE audiobooks SET
-            converted_at = datetime('now'),
-            output_path = ?,
-            chapter_count = ?
-        WHERE asin = ?
-    `,
-  ).run(outputPath, chapterCount, asin);
-}
-
 export function isDownloaded(asin: string): boolean {
   const d = getDb();
   const row = d
@@ -125,25 +114,12 @@ export function isDownloaded(asin: string): boolean {
   return row !== undefined;
 }
 
-export function isConverted(asin: string): boolean {
-  const d = getDb();
-  const row = d
-    .prepare(
-      "SELECT 1 FROM audiobooks WHERE asin = ? AND converted_at IS NOT NULL",
-    )
-    .get(asin) as Record<string, unknown> | undefined;
-  return row !== undefined;
-}
-
 export interface AudiobookRow {
   asin: string;
   author: string | null;
   title: string | null;
   downloaded_at: string | null;
-  converted_at: string | null;
   aax_path: string | null;
-  output_path: string | null;
-  chapter_count: number | null;
   ignored_at: string | null;
   not_downloadable_at: string | null;
 }
@@ -155,10 +131,15 @@ export function getAllAudiobooks(): AudiobookRow[] {
       .all() as unknown as AudiobookRow[];
 }
 
+// Downloaded books first (most recently downloaded first), then
+// not-yet-downloaded ones alphabetically. Replaces the old status-filter UI
+// with a single default sort by last-downloaded.
 export function getAllBooks(): AudiobookRow[] {
   const d = getDb();
   return d
-      .prepare("SELECT * FROM audiobooks ORDER BY title")
+      .prepare(
+        "SELECT * FROM audiobooks ORDER BY (downloaded_at IS NULL) ASC, downloaded_at DESC, title ASC",
+      )
       .all() as unknown as AudiobookRow[];
 }
 
@@ -173,14 +154,6 @@ export function getDownloadedAsins(): Set<string> {
   const d = getDb();
   const rows = d
     .prepare("SELECT asin FROM audiobooks WHERE downloaded_at IS NOT NULL AND ignored_at IS NULL")
-    .all() as { asin: string }[];
-  return new Set(rows.map((r) => r.asin));
-}
-
-export function getConvertedAsins(): Set<string> {
-  const d = getDb();
-  const rows = d
-    .prepare("SELECT asin FROM audiobooks WHERE converted_at IS NOT NULL AND ignored_at IS NULL")
     .all() as { asin: string }[];
   return new Set(rows.map((r) => r.asin));
 }
@@ -243,10 +216,7 @@ export function deleteBook(asin: string): void {
   d.prepare(`
     UPDATE audiobooks SET
       downloaded_at = NULL,
-      converted_at = NULL,
       aax_path = NULL,
-      output_path = NULL,
-      chapter_count = NULL,
       not_downloadable_at = NULL
     WHERE asin = ?
   `).run(asin);

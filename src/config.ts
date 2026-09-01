@@ -76,24 +76,40 @@ function defaultPath(envKey: string, desktop: string, server: string): string {
 }
 
 export const config = {
-  activationBytes: env("AUDIBLE_ACTIVATION_BYTES"),
-  targetDir: defaultPath(
-    "AUDIBLE_TARGET_DIR",
-    desktopPaths.targetDir,
-    "~/Music/audible-backup",
-  ),
-  outputDir: defaultPath(
-    "AUDIBLE_OUTPUT_DIR",
-    desktopPaths.outputDir,
-    "~/Music/audible-backup/converted",
-  ),
-  mp3Quality: env("MP3_QUALITY", "4"),
-  downloadDelayMs: parseInt(env("DOWNLOAD_DELAY_MS", "2000"), 10),
-  convertDelayMs: parseInt(env("CONVERT_DELAY_MS", "1000"), 10),
-  libraryMaxBuffer: parseInt(env("LIBRARY_MAX_BUFFER", "10485760"), 10),
-  dbPath: defaultPath(
-    "DB_PATH",
-    desktopPaths.dbPath,
-    "~/Music/audible-backup/audiobooks.db",
-  ),
+  get activationBytes() {
+    return env("AUDIBLE_ACTIVATION_BYTES");
+  },
+  get targetDir() {
+    return defaultPath(
+      "AUDIBLE_TARGET_DIR",
+      desktopPaths.targetDir,
+      "~/Music/audible-backup",
+    );
+  },
+  get outputDir() {
+    return defaultPath(
+      "AUDIBLE_OUTPUT_DIR",
+      desktopPaths.outputDir,
+      "~/Music/audible-backup/converted",
+    );
+  },
+  get mp3Quality() {
+    return env("MP3_QUALITY", "4");
+  },
+  get downloadDelayMs() {
+    return parseInt(env("DOWNLOAD_DELAY_MS", "2000"), 10);
+  },
+  get convertDelayMs() {
+    return parseInt(env("CONVERT_DELAY_MS", "1000"), 10);
+  },
+  get libraryMaxBuffer() {
+    return parseInt(env("LIBRARY_MAX_BUFFER", "10485760"), 10);
+  },
+  get dbPath() {
+    return defaultPath(
+      "DB_PATH",
+      desktopPaths.dbPath,
+      "~/Music/audible-backup/audiobooks.db",
+    );
+  },
 };
