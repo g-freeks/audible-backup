@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 
 /**
  * What build is this?
@@ -11,7 +12,10 @@ import * as path from "node:path";
  *
  * `build-info.json` is written at package time (see the Flatpak manifest and
  * the Dockerfile). Running from a source checkout there is no such file, and
- * the build reads as "dev".
+ * the build reads as "dev" — in that case the settings page instead shows
+ * which git ref is checked out, since that is the thing a developer actually
+ * wants to confirm. `main` is not shown: it is the assumed default, so
+ * calling it out would just be noise.
  */
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -23,6 +27,38 @@ export interface BuildInfo {
   build: string;
   /** The commit it was built from, when the packager knew it. */
   commit?: string;
+  /** Dev builds only: branch name (or short commit if detached), unless it's "main". */
+  devRef?: string;
+}
+
+/**
+ * Picks what to show for a source checkout: the branch name, unless it's
+ * "main" (the assumed default, not worth calling out), or the short commit
+ * when HEAD is detached. Exported for direct, environment-independent testing.
+ */
+export function formatDevRef(branch: string, shortCommit: string): string | undefined {
+  if (branch && branch !== "HEAD") {
+    return branch === "main" ? undefined : branch;
+  }
+  return shortCommit || undefined;
+}
+
+function git(args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: ROOT,
+    stdio: ["ignore", "pipe", "ignore"],
+  }).toString().trim();
+}
+
+function currentGitRef(): string | undefined {
+  try {
+    const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const shortCommit = branch === "HEAD" ? git(["rev-parse", "--short", "HEAD"]) : "";
+    return formatDevRef(branch, shortCommit);
+  } catch {
+    // Not a git checkout (e.g. extracted from a source tarball).
+    return undefined;
+  }
 }
 
 /** Not cached: the settings page renders rarely, and a stale cache would be
@@ -47,14 +83,17 @@ export function buildInfo(): BuildInfo {
     // Not packaged: "dev" is the honest answer.
   }
 
-  return { version, build, commit };
+  const devRef = build === "dev" ? currentGitRef() : undefined;
+
+  return { version, build, commit, devRef };
 }
 
 /** One line for the UI: "1.2.0 · built 2026-09-01T08:15:00Z (2d7e3c7)". */
 export function versionLine(): string {
   const info = buildInfo();
   const built = info.build === "dev" ? "development build" : `built ${info.build}`;
-  return info.commit
-    ? `${info.version} · ${built} (${info.commit.slice(0, 7)})`
+  const ref = info.build === "dev" ? info.devRef : info.commit?.slice(0, 7);
+  return ref
+    ? `${info.version} · ${built} (${ref})`
     : `${info.version} · ${built}`;
 }

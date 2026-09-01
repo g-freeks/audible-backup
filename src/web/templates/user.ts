@@ -104,6 +104,9 @@ export interface SettingsView {
   userNav?: UserNav;
   /** Desktop install: no account, so no password or user identity shown. */
   desktop?: boolean;
+  /** Lights up the topbar's log indicator when an operation (e.g. an
+   * auto-triggered sync) is already running for this user. */
+  operationRunning?: boolean;
 }
 
 const MARKETPLACES: [string, string][] = [
@@ -178,11 +181,14 @@ function audibleCard(audible: AudibleStatus): string {
 }
 
 export function settingsPage(view: SettingsView): string {
-  const { userName, activationBytes, hasPassword, message, error, userNav, desktop } = view;
+  const { userName, activationBytes, hasPassword, message, error, userNav, desktop, operationRunning } = view;
   const content = `
     ${formStyles}
     <div class="auth-wrap">
-      <h1>${desktop ? "Settings" : `Settings — ${escapeHtml(userName)}`}</h1>
+      <div class="settings-header">
+        <h1>${desktop ? "Settings" : `Settings — ${escapeHtml(userName)}`}</h1>
+        <a href="/" class="btn btn-ghost btn-sm">&larr; Back to library</a>
+      </div>
       ${message ? `<div class="auth-error" style="color:var(--success)">${escapeHtml(message)}</div>` : ""}
       ${error ? `<div class="auth-error">${escapeHtml(error)}</div>` : ""}
       ${audibleCard(view.audible)}
@@ -212,12 +218,10 @@ export function settingsPage(view: SettingsView): string {
         </form>
       </div>
 
-      <a href="/" class="btn btn-ghost">&larr; Back to library</a>
-
       <p class="build-line" title="Which build is running — useful after an update">
         Audible Backup ${escapeHtml(versionLine())}
       </p>
     </div>
   `;
-  return layout("Settings", content, userNav);
+  return layout("Settings", content, userNav, undefined, operationRunning ?? false);
 }

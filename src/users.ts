@@ -14,11 +14,21 @@ import { isDesktopMode, desktopPaths } from "./config.ts"; // also loads .env
  * legacy single-user mode driven by the env-based config.
  */
 
+export interface ColumnPrefs {
+  hidden: string[];
+  order: string[];
+}
+
 export interface User {
   name: string;
   passwordHash?: string;
   passwordSalt?: string;
   activationBytes?: string;
+  /** Books-table column visibility/order. Saved per account rather than in
+   * browser storage: the desktop app binds to a fresh OS-assigned port on
+   * every launch, so localStorage (scoped to that origin) would reset every
+   * restart. */
+  columnPrefs?: ColumnPrefs;
 }
 
 export interface UserDirs {
@@ -180,6 +190,14 @@ export function updateUser(
 
   saveUsers(users);
   return user;
+}
+
+export function setColumnPrefs(name: string, prefs: ColumnPrefs): void {
+  const users = listUsers();
+  const user = users.find((u) => u.name === name);
+  if (!user) throw new Error(`Unknown user: ${name}`);
+  user.columnPrefs = prefs;
+  saveUsers(users);
 }
 
 // --- Current-user context ---

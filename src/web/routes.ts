@@ -44,6 +44,7 @@ import {
   currentUser,
   currentUserName,
   userDirs,
+  setColumnPrefs,
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
@@ -254,6 +255,7 @@ async function renderSettings(
     audible: await audibleStatus(),
     userNav: buildUserNav(),
     desktop: isDesktopMode(),
+    operationRunning: currentOperationRunning(),
     ...extra,
   });
   return status ? c.html(html, status as 400) : c.html(html);
@@ -315,8 +317,10 @@ routes.post("/user/audible/complete", async (c) => {
       return renderSettings(c, { error: done.message || "Sign-in failed" }, 400);
     }
     clearPendingLogin(user.name);
-    const account = done.account ? ` as ${done.account}` : "";
-    return renderSettings(c, { message: `Audible account connected${account}.` });
+    // Head straight to the library and let it kick off a sync itself (see the
+    // `sync=1` handling on GET /) — a freshly-connected account is otherwise
+    // an empty library until the user remembers to click Sync Library.
+    return c.redirect("/?sync=1");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return renderSettings(c, { error: `Sign-in failed: ${msg}` }, 400);
@@ -408,10 +412,40 @@ routes.get("/", (c) => {
     const chapters = findConvertedChapters(paths.outputDir, book.asin, book.title || "");
     if (chapters.length > 0) convertedAsins.set(book.asin, chapters.length);
   }
-  return c.html(booksPage(convertibleAsins, convertedAsins, buildUserNav()));
+  return c.html(booksPage(convertibleAsins, convertedAsins, buildUserNav(), {
+    autoSync: c.req.query("sync") === "1",
+    operationRunning: currentOperationRunning(),
+    columnPrefs: currentUser()?.columnPrefs,
+  }));
 });
 routes.get("/library", (c) => c.redirect("/"));
 routes.get("/convert", (c) => c.redirect("/"));
+
+// --- Column prefs (visibility + drag order) ---
+// Saved per account rather than relying on localStorage: the desktop app
+// binds to a fresh OS-assigned port every launch, so browser storage (scoped
+// to that origin) would otherwise reset on every restart.
+
+routes.post("/api/column-prefs", async (c) => {
+  const user = currentUser();
+  if (!user) return c.body(null, 204); // legacy mode: nothing to attach this to
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.text("Invalid JSON", 400);
+  }
+  const record = body as { hidden?: unknown; order?: unknown } | null;
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+  setColumnPrefs(user.name, {
+    hidden: strings(record?.hidden),
+    order: strings(record?.order),
+  });
+  return c.body(null, 204);
+});
 
 // --- JSON API ---
 
@@ -580,6 +614,18 @@ function ownsOperation(op: { user?: string }): boolean {
   return !op.user || op.user === currentUserName();
 }
 
+/**
+ * Whether an operation the current user can watch is in flight — used to
+ * render the topbar's log indicator correctly on first paint, since an
+ * operation started without a click on the current page (e.g. an auto-sync
+ * right after connecting Audible) never fires the client-side mutation that
+ * would otherwise flip it on.
+ */
+function currentOperationRunning(): boolean {
+  const op = getActiveOperation();
+  return !!op && !op.finished && ownsOperation(op);
+}
+
 routes.get("/library/sync/stream", (c) => {
   const op = getActiveOperation();
   if (!op || op.type !== "sync" || !ownsOperation(op)) {
@@ -654,6 +700,99 @@ routes.get("/library/download/stream", (c) => {
   const op = getActiveOperation();
   if (!op || op.type !== "download" || !ownsOperation(op)) {
     return c.text("No active download operation", 404);
+  }
+  return sseStream(c, op.reporter);
+});
+
+// --- Download All / Download Selected: fetch not-yet-downloaded books, then
+// --- convert everything that's ready — one operation, so "download" always
+// --- means fully processed, the same as the one-click Download button.
+// --- With no ASINs, this is "Download All"; with some, it's the scoped
+// --- "Download Selected" run.
+
+routes.post("/library/download-all", async (c) => {
+  if (isOperationRunning()) {
+    return c.html(
+      '<div class="log-panel"><div class="log-line warn">An operation is already running. Please wait for it to complete.</div></div>',
+      409,
+    );
+  }
+
+  const body = await c.req.parseBody({ all: true });
+  let selected: string[] | undefined;
+  if (body.asin) {
+    selected = Array.isArray(body.asin) ? body.asin as string[] : [body.asin as string];
+    if (!selected.every(isValidAsin)) {
+      return c.html(
+        '<div class="log-panel"><div class="log-line error">Invalid ASIN</div></div>',
+        400,
+      );
+    }
+  }
+  const selectedAsins = selected ? new Set(selected) : undefined;
+
+  const paths = requestPaths();
+  const notDownloaded = getNotDownloadedBooks().filter(
+    (row) => !selectedAsins || selectedAsins.has(row.asin),
+  );
+  const downloadBooks: AudiobookEntry[] = notDownloaded.map((row) => ({
+    asin: row.asin,
+    author: row.author || "",
+    title: row.title || row.asin,
+    fullLine: "",
+  }));
+
+  // Books already downloaded but not yet converted can be marked queued right
+  // away; freshly downloaded ones only become convertible once the download
+  // step lands their files, so they pick up their real status when the
+  // finished operation triggers the usual books-table refresh.
+  let alreadyDownloadedQueuedSwaps = "";
+  try {
+    const converter = new Converter(paths.targetDir, paths.outputDir, paths.activationBytes);
+    const ignoredAsins = getIgnoredAsins();
+    const queued = converter.findBookFiles().filter((b) =>
+      !ignoredAsins.has(b.asin) &&
+      (!selectedAsins || selectedAsins.has(b.asin)) &&
+      findConvertedChapters(paths.outputDir, b.asin, b.bookTitle).length === 0,
+    );
+    alreadyDownloadedQueuedSwaps = queued.map((b) => queuedSwap(b.asin)).join("");
+  } catch {
+    // activation bytes or target dir may not be configured yet
+  }
+
+  const reporter = startOperation("download-all");
+  const library = new AudibleLibrary(paths.targetDir, reporter);
+
+  const run = async (): Promise<void> => {
+    if (downloadBooks.length > 0) {
+      await library.downloadBooks(downloadBooks, false);
+    }
+    const converter = new Converter(
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
+      reporter,
+      false,
+    );
+    await converter.convertAll(selectedAsins);
+  };
+
+  run()
+    .then(() => reporter.done({ success: true, summary: "Download complete" }))
+    .catch((err: Error) =>
+      reporter.done({ success: false, summary: failureSummary(err) }),
+    )
+    .finally(() => clearOperation());
+
+  const oobSwaps = downloadBooks.map((b) => queuedSwap(b.asin)).join("") + alreadyDownloadedQueuedSwaps;
+
+  return c.html(logPanel("/library/download-all/stream", "Download started...", oobSwaps));
+});
+
+routes.get("/library/download-all/stream", (c) => {
+  const op = getActiveOperation();
+  if (!op || op.type !== "download-all" || !ownsOperation(op)) {
+    return c.text("No active operation", 404);
   }
   return sseStream(c, op.reporter);
 });

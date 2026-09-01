@@ -85,12 +85,26 @@ describe("GET /", () => {
     assert.ok(html.includes('id="select-all"'));
   });
 
-  it("shows download buttons when not-downloaded books exist", async () => {
+  it("always offers Download Selected and Download All", async () => {
     upsertBook("B000000001", { author: "A1", title: "T1" });
     const res = await app.request("/");
     const html = await res.text();
-    assert.ok(html.includes("Fetch Selected"));
-    assert.ok(html.includes("Fetch All"));
+    assert.ok(html.includes("Download Selected"));
+    assert.ok(html.includes("Download All"));
+    assert.match(html, /id="download-selected-btn"[^>]*disabled/, "greyed out until something is checked");
+    assert.match(
+      html,
+      /id="download-selected-btn"[^>]*hx-post="\/library\/download-all"/,
+      "fully processes (fetch + convert) like the row Download button, not just a fetch",
+    );
+  });
+
+  it("gives Sync Library both a spinnable icon and a hover-to-cancel icon, not a text label", async () => {
+    const html = await (await app.request("/")).text();
+    const btn = html.match(/<button id="sync-library-btn"[\s\S]*?<\/button>/)?.[0] || "";
+    assert.match(btn, /class="icon-refresh"/, "the refresh icon (spun via CSS while running)");
+    assert.match(btn, /class="icon-cancel"/, "the hover-to-cancel X, hidden until [data-cancel]:hover");
+    assert.ok(!btn.includes(">Sync Library<"), "no visible text label — aria-label carries it instead");
   });
 
   it("shows both downloaded and not-downloaded books", async () => {
@@ -375,6 +389,64 @@ describe("POST /library/download", () => {
     assert.ok(html.includes('id="status-B000000001"'));
     assert.ok(html.includes("Queued"));
     await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+});
+
+// --- Download All / Download Selected (both fully process: fetch + convert) ---
+
+describe("POST /library/download-all", () => {
+  it("returns 409 when an operation is already running", async () => {
+    startOperation("sync");
+    const res = await app.request("/library/download-all", { method: "POST" });
+    assert.equal(res.status, 409);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("queues not-downloaded books for fetch and already-fetched ones for conversion", async () => {
+    upsertBook("B0ALL00001", { author: "A1", title: "Not downloaded" });
+
+    const targetDir = process.env.AUDIBLE_TARGET_DIR!;
+    fs.writeFileSync(path.join(targetDir, "B0ALL00002_Ready.aax"), "");
+    fs.writeFileSync(path.join(targetDir, "B0ALL00002-chapters.json"), "{}");
+    fs.writeFileSync(path.join(targetDir, "B0ALL00002_Ready.jpg"), "");
+    markDownloaded("B0ALL00002", "A2", "Ready", path.join(targetDir, "B0ALL00002_Ready.aax"));
+
+    const res = await app.request("/library/download-all", { method: "POST" });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.ok(html.includes("sse-connect"));
+    assert.ok(html.includes("/library/download-all/stream"));
+    assert.ok(html.includes("Download started..."));
+    assert.ok(html.includes('id="status-B0ALL00001"'), "not-downloaded book queued for fetch");
+    assert.ok(html.includes('id="status-B0ALL00002"'), "already-downloaded book queued for conversion");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("scopes to the given ASINs — this is what Download Selected posts to", async () => {
+    // Selected: not-downloaded (queued for fetch).
+    upsertBook("B0SEL00001", { author: "A1", title: "Selected, not downloaded" });
+    // Not selected: also not-downloaded, must NOT be queued.
+    upsertBook("B0SEL00002", { author: "A2", title: "Not selected" });
+
+    const res = await app.request("/library/download-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "asin=B0SEL00001",
+    });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.ok(html.includes('id="status-B0SEL00001"'), "selected book is queued");
+    assert.ok(!html.includes('id="status-B0SEL00002"'), "unselected book is left alone");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("rejects an invalid ASIN in the selection", async () => {
+    const res = await app.request("/library/download-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "asin=not-an-asin",
+    });
+    assert.equal(res.status, 400);
   });
 });
 
@@ -804,7 +876,7 @@ describe("Audible sign-in flow", () => {
     assert.match(await res.text(), /authorization code/i);
   });
 
-  it("completes sign-in and reports the account as connected", async () => {
+  it("redirects to the library with an auto-sync flag, and reports connected", async () => {
     const cookie = await signedInUser("alice");
     await app.request("/user/audible/start", {
       method: "POST", headers: { cookie },
@@ -812,13 +884,17 @@ describe("Audible sign-in flow", () => {
     });
     const res = await app.request("/user/audible/complete", {
       method: "POST", headers: { cookie },
+      redirect: "manual",
       body: new URLSearchParams({
         redirect_url: "https://www.audible.de/?openid.oa2.authorization_code=ABC123",
       }),
     });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /connected as Test User/i);
+    assert.equal(res.status, 302);
+    assert.ok(res.headers.get("location")?.endsWith("/?sync=1"), "sends the user to an auto-syncing library");
+
+    // The library page picks up the flag and fires the sync request itself.
+    const library = await (await app.request("/?sync=1", { headers: { cookie } })).text();
+    assert.match(library, /hx-post="\/library\/sync"[^>]*hx-trigger="click, load"/);
 
     // status is read back from the user's own config dir
     const after = await (await app.request("/user/settings", { headers: { cookie } })).text();
@@ -907,22 +983,21 @@ describe("POST /open-output", () => {
 });
 
 describe("row actions are unambiguous", () => {
-  it("uses one Get MP3s action for every un-converted state", async () => {
+  it("uses one Download action for every un-converted state", async () => {
     upsertBook("B0STATE0001", { author: "A", title: "Not downloaded yet" });
     markDownloaded("B0STATE0002", "A", "Downloaded only", "/x.aaxc");
     const html = await (await app.request("/")).text();
 
-    assert.equal((html.match(/Get MP3s/g) || []).length, 2, "one per row");
+    assert.equal((html.match(/>Download</g) || []).length, 2, "one per row");
     assert.match(html, /hx-post="\/prepare\/B0STATE0001"/);
     assert.match(html, /hx-post="\/prepare\/B0STATE0002"/);
-    assert.ok(!/>Download<\/button>/.test(html), "no bare 'Download' button");
   });
 
   it("links converted books straight at the ZIP with the same label", async () => {
     markDownloaded("B0STATE0003", "A", "Done", "/x.aaxc");
     markBookConverted("Done");
     const html = await (await app.request("/")).text();
-    assert.match(html, /href="\/download\/converted\/B0STATE0003"[^>]*>Get MP3s</);
+    assert.match(html, /href="\/download\/converted\/B0STATE0003"[^>]*>Download</);
   });
 
   it("names the Audible-side actions distinctly", async () => {
@@ -947,6 +1022,93 @@ describe("books table layout", () => {
     const html = await (await app.request("/")).text();
     assert.match(html, /<th class="sortable col-author"/);
     assert.match(html, new RegExp(`<td class="col-author"[^>]*title="${longAuthor}"`));
+  });
+
+  it("makes every data column draggable, keyed for reordering rather than by a static index", async () => {
+    markDownloaded("B0DRAGCOL1", "A", "Draggable Columns", "/x.aaxc");
+    const html = await (await app.request("/")).text();
+    // Sorting reads the header's live position (th.cellIndex) so it survives
+    // a drag reorder — a stale data-sort-col index would silently break it.
+    assert.ok(!html.includes("data-sort-col"), "no baked-in column index left to go stale after a drag");
+    for (const key of ["title", "series", "author", "narrator", "asin", "status", "downloaded", "purchased", "released", "runtime", "format", "language", "chapters"]) {
+      assert.match(html, new RegExp(`<th class="sortable[^"]*" data-col="${key}" draggable="true"`), `${key} header is draggable`);
+    }
+    // Checkbox and Actions are structural, not data columns — no attributes
+    // at all on their <th>, so this only holds if neither is draggable.
+    assert.ok(html.includes('<th><input type="checkbox" id="select-all"'), "checkbox column has no extra attributes");
+    assert.ok(html.includes("<th>Actions</th>"), "Actions column has no extra attributes");
+  });
+});
+
+describe("POST /api/column-prefs", () => {
+  async function signedIn(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("saves the signed-in user's column prefs, readable back from the books page", async () => {
+    const cookie = await signedIn("alice");
+    const res = await app.request("/api/column-prefs", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden: ["asin", "format"], order: ["title", "series"] }),
+    });
+    assert.equal(res.status, 204);
+
+    const html = await (await app.request("/", { headers: { cookie } })).text();
+    assert.match(html, /id="column-prefs-data"[^>]*data-hidden="asin,format"/);
+    assert.match(html, /data-order="title,series"/);
+  });
+
+  it("no-ops in legacy mode (no signed-in user to attach it to)", async () => {
+    const res = await app.request("/api/column-prefs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden: ["asin"], order: [] }),
+    });
+    assert.equal(res.status, 204);
+  });
+
+  it("rejects invalid JSON", async () => {
+    const cookie = await signedIn("bob");
+    const res = await app.request("/api/column-prefs", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: "not json",
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("ignores non-string entries instead of storing garbage", async () => {
+    const cookie = await signedIn("carol");
+    const res = await app.request("/api/column-prefs", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden: ["asin", 42, null], order: "not-an-array" }),
+    });
+    assert.equal(res.status, 204);
+
+    const html = await (await app.request("/", { headers: { cookie } })).text();
+    assert.match(html, /data-hidden="asin"/);
+    assert.match(html, /data-order=""/);
+  });
+
+  it("keeps each user's saved prefs separate", async () => {
+    const alice = await signedIn("dave");
+    const bob = await signedIn("erin");
+
+    await app.request("/api/column-prefs", {
+      method: "POST",
+      headers: { cookie: alice, "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden: ["asin"], order: [] }),
+    });
+
+    const bobHtml = await (await app.request("/", { headers: { cookie: bob } })).text();
+    assert.match(bobHtml, /data-hidden=""/, "a different user sees no saved prefs");
   });
 });
 

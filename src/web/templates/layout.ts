@@ -8,20 +8,30 @@ export interface UserNav {
   desktop?: boolean;
 }
 
-/** Opens the operation log, which stays closed until asked for. */
-const logToggle = `<button id="log-toggle" class="btn btn-sm btn-ghost" type="button"
+/** Opens the operation log, which stays closed until asked for. Rendered as
+ * already running when the server knows an operation is in flight for this
+ * user — otherwise the indicator would stay dark for an operation that was
+ * triggered without a click on this page (e.g. an auto-sync after connecting
+ * an Audible account), since nothing on the client would ever have mutated
+ * `#progress-panel` to notice it. */
+function logToggle(running: boolean): string {
+  return `<button id="log-toggle" class="btn btn-sm btn-ghost" type="button"
       aria-expanded="false" aria-controls="log-float" title="Show the operation log">
-      Log <span id="log-indicator" class="log-dot" hidden></span>
+      Log <span id="log-indicator" class="log-dot${running ? " running" : ""}"${running ? "" : " hidden"}></span>
     </button>`;
+}
 
-function topbar(userNav: UserNav): string {
+function topbar(userNav: UserNav, extra: string, running: boolean): string {
+  const center = extra ? `<div class="topbar-center">${extra}</div>` : "";
+
   // Desktop install: no accounts to switch between, but Settings still holds
   // the Audible connection and activation bytes.
   if (userNav.desktop) {
     return `<header class="topbar">
     <span class="topbar-title">Audible Backup</span>
+    ${center}
     <div class="topbar-actions">
-      ${logToggle}
+      ${logToggle(running)}
       <button class="btn btn-sm btn-ghost" type="button"
         hx-post="/open-output" hx-swap="none"
         title="Show the finished audiobooks in your file manager">Open folder</button>
@@ -35,8 +45,9 @@ function topbar(userNav: UserNav): string {
   if (!userNav.current) {
     return `<header class="topbar">
     <span class="topbar-title">Audible Backup</span>
+    ${center}
     <div class="topbar-actions">
-      ${logToggle}
+      ${logToggle(running)}
       <a class="btn btn-sm btn-ghost" href="/login">Sign in / Add user</a>
     </div>
   </header>`;
@@ -57,8 +68,9 @@ function topbar(userNav: UserNav): string {
 
   return `<header class="topbar">
     <span class="topbar-title">Audible Backup</span>
+    ${center}
     <div class="topbar-actions">
-      ${logToggle}
+      ${logToggle(running)}
       <div class="action-dropdown">
         <button class="btn btn-sm btn-ghost" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false">${escapeHtml(userNav.current)} &#9662;</button>
         <div class="dropdown-menu">${items}</div>
@@ -67,7 +79,13 @@ function topbar(userNav: UserNav): string {
   </header>`;
 }
 
-export function layout(title: string, content: string, userNav?: UserNav): string {
+export function layout(
+  title: string,
+  content: string,
+  userNav?: UserNav,
+  topbarExtra?: string,
+  operationRunning: boolean = false,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -259,7 +277,6 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     .log-dot.failed { background: var(--danger); }
     @keyframes log-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
     .empty { text-align: center; padding: 3rem; color: var(--text-muted); }
-    .actions { margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
     .htmx-indicator { display: none; }
     .htmx-request .htmx-indicator { display: inline-block; }
     .spinner { width: 1em; height: 1em; border: 2px solid var(--text-muted); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
@@ -279,7 +296,6 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .library-layout .actions { flex-shrink: 0; }
     .table-scroll {
       flex: 1;
       overflow-y: auto;
@@ -314,21 +330,17 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     #op-progress { margin-bottom: 0.5rem; }
     #op-progress:empty { margin-bottom: 0; }
     [id^="status-"] .progress-bar { height: 6px; min-width: 80px; }
-    .filter-bar {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-      flex-wrap: wrap;
-    }
-    .search-wrap { position: relative; display: flex; flex: 0 1 22rem; min-width: 19rem; }
-    .filter-bar input {
+    /* Lives in the topbar now, sharing a row with the title and the log/user
+       controls, so it is sized to match those btn-sm-scale controls rather
+       than the roomier full-width bar it used to have to itself. */
+    .search-wrap { position: relative; display: flex; flex: 1 1 14rem; min-width: 9rem; max-width: 22rem; }
+    .search-wrap input {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--text);
-      padding: 0.45rem 2rem 0.45rem 0.75rem;
-      font-size: 0.85rem;
+      padding: 0.3rem 1.8rem 0.3rem 0.6rem;
+      font-size: 0.8rem;
       outline: none;
       width: 100%;
     }
@@ -348,13 +360,19 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
     }
     .search-clear:hover { color: var(--text); background: var(--surface2); }
     .search-clear[hidden] { display: none; }
-    .filter-bar input:focus { border-color: var(--accent); }
+    .search-wrap input:focus { border-color: var(--accent); }
     th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { color: var(--text); }
     th.sortable::after { content: '⇅'; display: inline-block; margin-left: 0.3rem; font-size: 0.6rem; vertical-align: middle; opacity: 0.3; }
     th.sortable:hover::after { opacity: 0.6; }
     th.sortable.asc::after { content: '▲'; opacity: 1; }
     th.sortable.desc::after { content: '▼'; opacity: 1; }
+    /* Drag-to-reorder: grabbable header, dimmed while it's the one being
+       dragged, and an accent edge on whichever header it's currently over. */
+    th[data-col] { cursor: grab; }
+    th[data-col]:active { cursor: grabbing; }
+    th[data-col].dragging { opacity: 0.4; }
+    th[data-col].drag-over { box-shadow: inset 2px 0 0 var(--accent), inset -2px 0 0 var(--accent); }
     .btn-danger { background: var(--danger); color: #fff; }
     .btn-danger:hover { background: #ef4444; }
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
@@ -408,9 +426,23 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
       background: var(--surface);
       border-bottom: 1px solid var(--border);
     }
-    .topbar-title { font-weight: 600; font-size: 0.95rem; }
-    .topbar-actions { display: flex; align-items: center; gap: 0.5rem; }
+    .topbar-title { font-weight: 600; font-size: 0.95rem; flex-shrink: 0; }
+    .topbar-center { display: flex; align-items: center; gap: 0.5rem; flex: 1; margin: 0 1rem; min-width: 0; flex-wrap: wrap; }
+    .topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
     .topbar .dropdown-menu form { display: block; }
+    .btn-icon { padding: 0.4rem; line-height: 0; position: relative; }
+    .btn-icon svg { width: 1em; height: 1em; display: block; }
+    /* While running (data-cancel is set): the icon spins in place, and
+       hovering swaps it for a red "cancel" X instead of losing the icon to
+       the word "Cancel" the way a text button does. */
+    .btn-icon .icon-cancel { display: none; }
+    .btn-icon[data-cancel] .icon-refresh { animation: spin 1s linear infinite; }
+    .btn-icon[data-cancel]:hover .icon-refresh { display: none; }
+    .btn-icon[data-cancel]:hover .icon-cancel { display: block; color: var(--danger); }
+    .dropdown-item.checkbox-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .dropdown-item.checkbox-item input { margin: 0; }
+    .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+    .settings-header h1 { margin-bottom: 0; }
     body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
     #toast-region {
       position: fixed;
@@ -434,7 +466,7 @@ export function layout(title: string, content: string, userNav?: UserNav): strin
   </style>
 </head>
 <body${userNav ? ' class="has-topbar"' : ""}>
-  ${userNav ? topbar(userNav) : ""}
+  ${userNav ? topbar(userNav, topbarExtra || "", operationRunning) : ""}
   <main>${content}</main>
   <div id="toast-region" role="status" aria-live="polite"></div>
   <div id="log-float" role="region" aria-label="Operation log">

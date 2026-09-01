@@ -143,7 +143,10 @@ describe("single-user desktop UI", () => {
     assert.match(html, /href="\/user\/settings"/);
     assert.ok(!html.includes("Sign in / Add user"), "no sign-in prompt");
     assert.ok(!html.includes("Sign out"), "no sign-out");
-    assert.ok(!html.includes("data-dropdown-toggle"), "no user switcher");
+    // topbar-actions holds the user switcher when there is one; topbar-center
+    // (search/Columns/etc.) legitimately has its own dropdowns.
+    const actions = html.match(/<div class="topbar-actions">[\s\S]*?<\/div>\s*<\/header>/)?.[0] || "";
+    assert.ok(!actions.includes("data-dropdown-toggle"), "no user switcher in the topbar");
     assert.match(html, /id="log-toggle"/, "log button is still there");
   });
 
