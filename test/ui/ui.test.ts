@@ -505,6 +505,59 @@ describe("Audible sign-in from the settings page", () => {
   });
 });
 
+describe("conversion quality settings", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi();
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+    await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("clicking a format button updates the args field and its own selected state", async () => {
+    const argsInput = ui.page.locator("#audio-args");
+    assert.match(await argsInput.inputValue(), /libmp3lame/, "starts on the mp3 default");
+
+    await ui.page.click('[data-audio-format="flac"]');
+    assert.match(await argsInput.inputValue(), /flac/);
+    assert.equal(await ui.page.locator('[data-audio-format="flac"]').getAttribute("aria-pressed"), "true");
+    assert.equal(await ui.page.locator('[data-audio-format="mp3"]').getAttribute("aria-pressed"), "false");
+  });
+
+  it("clicking a quality button updates the args field and its tooltip reflects the current format", async () => {
+    await ui.page.click('[data-audio-format="aac"]');
+    await ui.page.click('[data-audio-quality="high"]');
+
+    const argsInput = ui.page.locator("#audio-args");
+    assert.equal(await argsInput.inputValue(), "-c:a aac -b:a 192k");
+    const tooltip = await ui.page.locator('[data-audio-quality="high"]').getAttribute("title");
+    assert.match(tooltip || "", /86 MB/, "tooltip re-estimated for the now-selected format (aac), not mp3");
+  });
+
+  it("the args field stays read-only until the manual toggle is checked", async () => {
+    const argsInput = ui.page.locator("#audio-args");
+    assert.equal(await argsInput.getAttribute("readonly"), "");
+
+    await ui.page.check("#audio-custom-toggle");
+    assert.equal(await argsInput.getAttribute("readonly"), null);
+
+    await argsInput.fill("-c:a libmp3lame -q:a 0");
+    await ui.page.click('form[action="/user/settings"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+
+    assert.equal(await ui.page.locator("#audio-args").inputValue(), "-c:a libmp3lame -q:a 0");
+    assert.equal(await ui.page.locator("#audio-custom-toggle").isChecked(), true);
+    assert.equal(await ui.page.locator("#audio-args").getAttribute("readonly"), null);
+  });
+});
+
 describe("action menus are not clipped by the table container", () => {
   let ui: UiContext;
 

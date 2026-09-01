@@ -3,7 +3,23 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { Converter, parseVoucher, findConvertedChapters, type ChapterInfo, type ChapterData } from "../src/converter.ts";
+import {
+  Converter,
+  parseVoucher,
+  findConvertedChapters,
+  audioEncodeArgs,
+  audioArgsString,
+  audioExtension,
+  tokenizeArgs,
+  isAudioFormat,
+  isAudioQuality,
+  AUDIO_FORMATS,
+  AUDIO_QUALITIES,
+  AUDIO_PRESETS,
+  DEFAULT_AUDIO_SETTINGS,
+  type ChapterInfo,
+  type ChapterData,
+} from "../src/converter.ts";
 import { closeDb } from "../src/db.ts";
 
 let dbDir: string;
@@ -113,6 +129,19 @@ describe("findConvertedChapters", () => {
     fs.mkdirSync(path.join(outDir, "Book_B001234567"));
     fs.writeFileSync(path.join(outDir, "Book_B001234567", "01 - Ch 1.mp3"), "");
     assert.equal(findConvertedChapters(outDir, "B001234567", "").length, 1);
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("recognizes flac and m4a chapters too, not just mp3", () => {
+    // A book converted before a later format switch must still read as
+    // converted — status detection isn't tied to whichever format is
+    // currently selected.
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-fc-out-"));
+    fs.mkdirSync(path.join(outDir, "My Book"));
+    fs.writeFileSync(path.join(outDir, "My Book", "01 - Ch 1.flac"), "");
+    fs.writeFileSync(path.join(outDir, "My Book", "02 - Ch 2.m4a"), "");
+    fs.writeFileSync(path.join(outDir, "My Book", "cover.jpg"), "");
+    assert.equal(findConvertedChapters(outDir, "B001234567", "My Book").length, 2);
     fs.rmSync(outDir, { recursive: true, force: true });
   });
 });
@@ -231,6 +260,102 @@ describe("Converter constructor", () => {
     const converter = createConverter();
     assert.ok(!converter.sourceDir.includes("~"));
     assert.ok(!converter.outputDir.includes("~"));
+  });
+
+  it("defaults to mp3/medium when no audio settings are given", () => {
+    const converter = createConverter();
+    assert.deepEqual(converter.audioSettings, DEFAULT_AUDIO_SETTINGS);
+  });
+
+  it("stores explicit audio settings", () => {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), "conv-src-"));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "conv-out-"));
+    const converter = new Converter(src, out, "deadbeef", undefined, false, {
+      format: "flac",
+      quality: "high",
+    });
+    assert.deepEqual(converter.audioSettings, { format: "flac", quality: "high" });
+  });
+});
+
+describe("audio quality presets", () => {
+  it("covers every format/quality combination with args and an estimate", () => {
+    for (const format of AUDIO_FORMATS) {
+      for (const quality of AUDIO_QUALITIES) {
+        const preset = AUDIO_PRESETS[format][quality];
+        assert.ok(preset.args.length > 0, `${format}/${quality} has encode args`);
+        assert.match(preset.estimate, /hour/i, `${format}/${quality} has a per-hour estimate`);
+      }
+    }
+  });
+
+  it("resolves preset args from format + quality", () => {
+    assert.deepEqual(
+      audioEncodeArgs({ format: "mp3", quality: "low" }),
+      AUDIO_PRESETS.mp3.low.args,
+    );
+    assert.deepEqual(
+      audioEncodeArgs({ format: "aac", quality: "high" }),
+      AUDIO_PRESETS.aac.high.args,
+    );
+  });
+
+  it("prefers custom args over the preset when set", () => {
+    const settings = { format: "mp3" as const, quality: "low" as const, customArgs: "-c:a libmp3lame -q:a 0" };
+    assert.deepEqual(audioEncodeArgs(settings), ["-c:a", "libmp3lame", "-q:a", "0"]);
+    assert.equal(audioArgsString(settings), "-c:a libmp3lame -q:a 0");
+  });
+
+  it("ignores blank custom args and falls back to the preset", () => {
+    const settings = { format: "mp3" as const, quality: "medium" as const, customArgs: "   " };
+    assert.deepEqual(audioEncodeArgs(settings), AUDIO_PRESETS.mp3.medium.args);
+  });
+
+  it("renders the preset as a plain string when there is no custom override", () => {
+    assert.equal(
+      audioArgsString({ format: "mp3", quality: "medium" }),
+      AUDIO_PRESETS.mp3.medium.args.join(" "),
+    );
+  });
+
+  it("maps AAC to an .m4a extension for container/metadata compatibility, others to themselves", () => {
+    assert.equal(audioExtension("mp3"), "mp3");
+    assert.equal(audioExtension("flac"), "flac");
+    assert.equal(audioExtension("aac"), "m4a");
+  });
+});
+
+describe("tokenizeArgs", () => {
+  it("splits plain whitespace-separated args", () => {
+    assert.deepEqual(tokenizeArgs("-c:a libmp3lame -b:a 128k"), ["-c:a", "libmp3lame", "-b:a", "128k"]);
+  });
+
+  it("respects double and single quoted segments", () => {
+    assert.deepEqual(
+      tokenizeArgs(`-metadata title="My Book" -metadata artist='Jane Doe'`),
+      ["-metadata", "title=My Book", "-metadata", "artist=Jane Doe"],
+    );
+  });
+
+  it("collapses extra whitespace and ignores empty input", () => {
+    assert.deepEqual(tokenizeArgs("  -c:a   flac  "), ["-c:a", "flac"]);
+    assert.deepEqual(tokenizeArgs(""), []);
+  });
+});
+
+describe("isAudioFormat / isAudioQuality", () => {
+  it("accepts only the known values", () => {
+    assert.equal(isAudioFormat("mp3"), true);
+    assert.equal(isAudioFormat("flac"), true);
+    assert.equal(isAudioFormat("aac"), true);
+    assert.equal(isAudioFormat("wav"), false);
+    assert.equal(isAudioFormat(undefined), false);
+    assert.equal(isAudioFormat(42), false);
+
+    assert.equal(isAudioQuality("low"), true);
+    assert.equal(isAudioQuality("medium"), true);
+    assert.equal(isAudioQuality("high"), true);
+    assert.equal(isAudioQuality("ultra"), false);
   });
 });
 

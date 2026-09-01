@@ -49,7 +49,10 @@ bar; switching users is a dropdown away.
 | `USERS_DIR` | Root directory for per-user data | `/data/users` in Docker |
 | `AUDIBLE_ACTIVATION_BYTES` | Fallback activation bytes for users without their own | — |
 | `WEB_USER` / `WEB_PASSWORD` | Optional HTTP basic auth gate in front of the whole app | unset |
-| `MP3_QUALITY` | LAME VBR quality (0 best – 9 smallest) | `4` |
+
+Audio format and quality (MP3/FLAC/AAC, low/medium/high, or a fully custom
+ffmpeg args string) are per-account settings, not environment variables —
+set them under **Settings**.
 
 > **Security note:** per-user passwords protect libraries from each other,
 > but anyone who can reach the app can create a user. Set
