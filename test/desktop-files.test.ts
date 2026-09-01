@@ -179,6 +179,21 @@ describe("AppStream metainfo", () => {
     assert.ok(!summary.endsWith("."), "summary should not end in a period");
   });
 
+  it("declares the version the package actually is", () => {
+    // Settings shows package.json's version. If the metainfo's newest release
+    // disagrees, the app tells the user one number while the store shows
+    // another — and the person checking which build they run gets a lie.
+    const releases = findAll(component, "release");
+    const newest = releases
+      .map((r) => r.attrs.version)
+      .sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+      )
+      .at(-1);
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+    assert.equal(newest, pkg.version, "metainfo's newest release vs package.json");
+  });
+
   it("has at least one release with a parseable date", () => {
     const releases = findAll(component, "release");
     assert.ok(releases.length > 0, "needs a <release>");

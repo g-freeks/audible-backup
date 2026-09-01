@@ -58,6 +58,14 @@ modules:
       - install -d /app/share/audible-backup
       - cp -r server.ts app.ts package.json src /app/share/audible-backup/
 
+      # Stamp the build so Settings can show which one is running. A Flatpak
+      # that silently failed to update otherwise looks identical to one that
+      # updated, which is exactly when you want to check. CI writes a stamp
+      # carrying the commit; a local build falls back to the time.
+      - if [ -f build-info.json ]; then cp build-info.json /app/share/audible-backup/;
+        else printf '{"build":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        > /app/share/audible-backup/build-info.json; fi
+
       # The shell looks for /app/bin/node and
       # /app/share/audible-backup/server.ts, both of which now exist.
       - install -Dm755 desktop/audible-backup /app/bin/audible-backup

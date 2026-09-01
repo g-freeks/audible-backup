@@ -154,6 +154,13 @@ describe("single-user desktop UI", () => {
     }
   });
 
+  it("shows which build is running", async () => {
+    // A packaged install gives no other way to tell whether an update
+    // actually landed, which is the whole reason this line exists.
+    const html = await (await app.request("/user/settings", withToken)).text();
+    assert.match(html, /Audible Backup [\d.]+ · /, "version and build are shown");
+  });
+
   it("reaches settings without a session and hides the password field", async () => {
     const res = await app.request("/user/settings", withToken);
     assert.equal(res.status, 200);
