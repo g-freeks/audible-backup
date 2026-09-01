@@ -31,33 +31,61 @@ jobs:
         run: npx --yes playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps chromium
       - run: npm run test:ui
 
-  # Build and publish the Docker image to GitHub Container Registry.
-  # Pushes to main publish :latest; version tags (v1.2.3) publish semver tags.
+  # Builds the Docker image on every pull request, and publishes it from main
+  # and version tags. Building on PRs matters because nothing else covers the
+  # Dockerfile: the unit and browser suites never touch it, so a broken image
+  # would otherwise only surface after merge, on main.
   docker:
     needs: [test, ui]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v7
+      # Emulation is only needed for the arm64 half, which only pushes build.
       - uses: docker/setup-qemu-action@v4
+        if: github.event_name == 'push'
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
+        if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/metadata-action@v6
         id: meta
+        if: github.event_name == 'push'
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=sha
-      - uses: docker/build-push-action@v7
+
+      # A pull request proves the image builds and runs. `load` puts it in the
+      # local daemon so the next step can start it; that needs a single
+      # architecture, which is why the emulated arm64 half is push-only.
+      - name: Build (pull request)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: BUILD_COMMIT=${{ github.sha }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: audible-backup:pr
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and publish
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: BUILD_COMMIT=${{ github.sha }}
@@ -67,3 +95,38 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # An image that builds but does not run is not much of a check.
+      - name: Smoke-test the image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker run -d --name smoke -p 3000:3000 \
+            -e WEB_PORT=3000 -e DB_PATH=/tmp/smoke.db \
+            -e AUDIBLE_TARGET_DIR=/tmp/aax -e AUDIBLE_OUTPUT_DIR=/tmp/out \
+            audible-backup:pr
+
+          # `if` keeps a failed attempt from tripping `set -e` mid-wait.
+          ready=""
+          for _ in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:3000/; then ready=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "the server never came up"; docker logs smoke; exit 1
+          fi
+          echo "library page served"
+
+          # ffmpeg is the one external tool the image still needs, and MP3 is
+          # the only thing it produces. Written to a file rather than piped:
+          # `grep -q` exits early, and under pipefail that would SIGPIPE.
+          docker exec smoke ffmpeg -hide_banner -encoders > encoders.txt
+          grep -q libmp3lame encoders.txt
+          echo "libmp3lame encoder present"
+
+          # Python left in phase 6 and must not creep back into the image.
+          if docker exec smoke sh -c "command -v python3" >/dev/null 2>&1; then
+            echo "python3 is back in the image"; docker logs smoke; exit 1
+          fi
+          echo "no python3 in the image"
+
+          docker rm -f smoke

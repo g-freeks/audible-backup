@@ -225,4 +225,14 @@ describe("the Docker image", () => {
   it("stamps the build so Settings can report it", () => {
     assert.match(dockerfile, /build-info\.json/);
   });
+
+  it("is built on pull requests, not only after merge", () => {
+    // Nothing else covers the Dockerfile — the unit and browser suites never
+    // touch it — so without this a broken image reaches main before anyone
+    // finds out.
+    const ci = fs.readFileSync(path.join(ROOT, ".github/workflows/test.yml"), "utf8");
+    assert.match(ci, /github\.event_name == 'pull_request'/);
+    assert.match(ci, /name: Build \(pull request\)/);
+    assert.match(ci, /name: Smoke-test the image/);
+  });
 });
