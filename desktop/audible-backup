@@ -201,13 +201,11 @@ app.connect("activate", () => {
     return;
   }
 
-  // The page renders its own dark theme unconditionally (see
-  // src/web/templates/layout.ts), so the native window chrome is forced dark
-  // too — otherwise GTK's default light titlebar sits directly on top of the
-  // page's near-black background, which is the mismatch this app most
-  // visibly had. Once the page follows the system theme (a separate change),
-  // this should follow it too instead of forcing dark.
-  Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK);
+  // The page now follows prefers-color-scheme (see
+  // src/web/templates/layout.ts), so the window chrome should track the
+  // system theme too rather than forcing dark — otherwise the two would
+  // disagree as soon as the user's session is in light mode.
+  Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.DEFAULT);
 
   const window = new Adw.ApplicationWindow({
     application: app,
