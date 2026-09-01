@@ -861,11 +861,13 @@ describe("Audible sign-in flow", () => {
     assert.match(html, /Connect Audible/);
   });
 
-  it("explains the CLI fallback when the helper is unavailable", async () => {
+  it("explains what to do when an external helper will not start", async () => {
+    // Only reachable via AUDIBLE_HELPER; the built-in client is always there.
     process.env.FAKE_HELPER_MODE = "missing";
     const cookie = await signedInUser("alice");
     const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /audible quickstart/);
+    assert.match(html, /AUDIBLE_HELPER/);
+    assert.ok(!/quickstart/.test(html), "must not point at audible quickstart");
     delete process.env.FAKE_HELPER_MODE;
   });
 });

@@ -24,10 +24,10 @@ function requireAudibleCli(): void {
   } catch {
     console.error(
       "Error: 'audible' CLI not found on PATH.\n\n" +
-        "Install audible-cli using one of:\n" +
-        "  pipx install audible-cli\n" +
-        "  pip install audible-cli\n\n" +
-        "Then run 'audible quickstart' to configure your account.",
+        "It is only needed for the legacy audible-cli path; the built-in " +
+        "client is used by default. Sign in from the web UI under " +
+        "Settings \u2192 Connect Audible, or install audible-cli with " +
+        "'pipx install audible-cli' if you specifically want that path.",
     );
     process.exit(1);
   }

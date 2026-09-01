@@ -1,16 +1,10 @@
 FROM node:24-bookworm-slim
 
+# ffmpeg is the only external tool left: the Audible client is TypeScript,
+# so the image needs no Python and no audible-cli.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      ffmpeg \
-      python3 \
-      python3-pip \
-      python3-venv && \
+    apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
-
-RUN python3 -m venv /opt/audible-venv && \
-    /opt/audible-venv/bin/pip install --no-cache-dir audible-cli
-ENV PATH="/opt/audible-venv/bin:$PATH"
 
 WORKDIR /app
 

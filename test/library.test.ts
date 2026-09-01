@@ -108,10 +108,13 @@ describe("describeAudibleCliError", () => {
     assert.match(msg, /pipx install audible-cli/);
   });
 
-  it("points at the one-time quickstart for auth failures", () => {
+  it("points at the working sign-in flow for auth failures", () => {
+    // Signing in used to be a command-line step. It is a page in the app now,
+    // so the error must not send people to a tool the image no longer ships.
     const msg = describeAudibleCliError(new Error("no profile found in config"));
     assert.match(msg, /sign-in required/i);
-    assert.match(msg, /audible quickstart/);
+    assert.match(msg, /Connect Audible/);
+    assert.ok(!/quickstart/.test(msg), "must not point at audible quickstart");
   });
 
   it("falls back to the raw error otherwise", () => {

@@ -200,3 +200,29 @@ describe("flatpak CI job", () => {
     assert.match(script, new RegExp(`APP=${APP_ID.replace(/\./g, "\\.")}$`, "m"));
   });
 });
+
+describe("the Docker image", () => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
+
+  it("installs no Python and no audible-cli", () => {
+    // The Audible client is TypeScript; Python in the image would be ~100 MB
+    // of dependency nobody uses. Comments are stripped first so that saying
+    // "no Python" in one does not trip the check.
+    const directives = dockerfile
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+
+    for (const gone of ["python3", "python3-pip", "python3-venv", "audible-cli", "venv", "pip install"]) {
+      assert.ok(!directives.includes(gone), `Dockerfile still installs ${gone}`);
+    }
+  });
+
+  it("still installs ffmpeg, which conversion genuinely needs", () => {
+    assert.match(dockerfile, /apt-get install[^\n]*ffmpeg/);
+  });
+
+  it("stamps the build so Settings can report it", () => {
+    assert.match(dockerfile, /build-info\.json/);
+  });
+});
