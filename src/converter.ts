@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { config } from "./config.ts";
-import { getIgnoredAsins, getAudiobookByAsin } from "./db.ts";
+import { getIgnoredAsins, getAudiobookByAsin, type AudiobookRow } from "./db.ts";
 import { type ProgressReporter, consoleReporter } from "./progress.ts";
 import { operationSignal } from "./operations.ts";
 
@@ -70,30 +70,137 @@ export function sanitizeFilename(filename: string): string {
     .trim();
 }
 
-export function getBookDirName(asin: string, bookTitle: string): string {
-  if (bookTitle) {
-    return sanitizeFilename(bookTitle);
-  }
-  return sanitizeFilename(`Book_${asin}`);
+// --- Output format (directory/filename templates) ---
+//
+// A tag-based template, e.g. directory ["{Author}", "{Series}", "{Series} -
+// {Series Entry #} - {Title}"] + filename "{Chapter #} - {Chapter Name}".
+// Each directory entry is one folder level; a level that renders empty (e.g.
+// {Series} for a standalone book) is dropped rather than creating an empty
+// folder. Rendering is pure string concatenation — the result is always run
+// through sanitizeFilename, so there is no path-traversal surface even if a
+// tag's value contained "/" or "..".
+
+export type FormatSegmentType = "tag" | "text";
+
+export interface FormatSegment {
+  type: FormatSegmentType;
+  /** A tag key (e.g. "author") when type is "tag"; literal text otherwise. */
+  value: string;
 }
 
-/**
- * A book's own asin+title deterministically names its output directory
- * (see getBookDirName), so "is this converted" is a direct filesystem check
- * against a known path rather than a stored DB flag — no title-matching
- * against unknown files involved.
- */
+export type FormatRow = FormatSegment[];
+
+export interface OutputFormat {
+  /** One entry per folder level, book's own directory last. */
+  directory: FormatRow[];
+  /** The per-chapter filename, extension excluded. */
+  filename: FormatRow;
+}
+
+/** Matches today's fixed behavior exactly: a single folder named after the
+ * book title (falling back to the ASIN when there's no title), and chapter
+ * files named "{number} - {name}". */
+export const DEFAULT_OUTPUT_FORMAT: OutputFormat = {
+  directory: [[{ type: "tag", value: "title" }]],
+  filename: [
+    { type: "tag", value: "chapterNumber" },
+    { type: "text", value: " - " },
+    { type: "tag", value: "chapterName" },
+  ],
+};
+
+export interface TagDef {
+  key: string;
+  label: string;
+}
+
+/** Available in both the directory and filename templates. */
+export const BOOK_TAGS: TagDef[] = [
+  { key: "title", label: "Title" },
+  { key: "author", label: "Author" },
+  { key: "series", label: "Series" },
+  { key: "seriesEntry", label: "Series Entry #" },
+  { key: "narrator", label: "Narrator" },
+  { key: "language", label: "Language" },
+  { key: "asin", label: "ASIN" },
+  { key: "year", label: "Year" },
+];
+
+/** Only meaningful per-chapter, so only offered in the filename template. */
+export const CHAPTER_TAGS: TagDef[] = [
+  { key: "chapterNumber", label: "Chapter #" },
+  { key: "chapterName", label: "Chapter Name" },
+];
+
+export function renderRow(row: FormatRow, values: Record<string, string>): string {
+  return row.map((seg) => (seg.type === "tag" ? values[seg.value] ?? "" : seg.value)).join("");
+}
+
+/** One sanitized path segment per directory level that didn't render empty. */
+export function renderDirectorySegments(format: OutputFormat, values: Record<string, string>): string[] {
+  return format.directory
+    .map((row) => sanitizeFilename(renderRow(row, values).trim()))
+    .filter((segment) => segment.length > 0);
+}
+
+/** The chapter filename (no extension); falls back when the template renders empty. */
+export function renderFilenameBase(format: OutputFormat, values: Record<string, string>, fallback: string): string {
+  const rendered = renderRow(format.filename, values).trim();
+  return sanitizeFilename(rendered || fallback);
+}
+
+/** Tag values for a book, independent of any particular chapter. bookTitle
+ * (the freshly-resolved title at call time, e.g. parsed from a filename)
+ * takes precedence over the database row's title, matching what callers
+ * have always passed as the authoritative title. */
+export function bookTagValues(
+  row: AudiobookRow | undefined,
+  bookTitle: string,
+  asin: string,
+): Record<string, string> {
+  return {
+    title: (bookTitle || row?.title || "").trim(),
+    author: row?.author || "",
+    series: row?.series_title || "",
+    seriesEntry: row?.series_sequence || "",
+    narrator: row?.narrators || "",
+    language: row?.language || "",
+    asin,
+    year: row?.released_at ? row.released_at.slice(0, 4) : "",
+  };
+}
+
+export function getBookDirName(
+  asin: string,
+  bookTitle: string,
+  format: OutputFormat = DEFAULT_OUTPUT_FORMAT,
+): string {
+  const values = bookTagValues(getAudiobookByAsin(asin), bookTitle, asin);
+  const segments = renderDirectorySegments(format, values);
+  if (segments.length === 0) {
+    return bookTitle ? sanitizeFilename(bookTitle) : sanitizeFilename(`Book_${asin}`);
+  }
+  return path.join(...segments);
+}
+
 /** Extensions any supported output format's chapter files can end in — kept
  * broad (not just the current format) so a book converted before a format
  * change still reads as converted. */
 const AUDIO_EXTENSIONS = ["mp3", "flac", "m4a"];
 
+/**
+ * A book's own asin+title(+format) deterministically names its output
+ * directory (see getBookDirName), so "is this converted" is a direct
+ * filesystem check against a known path rather than a stored DB flag — no
+ * title-matching against unknown files involved.
+ */
 export function findConvertedChapters(
   outputDir: string,
   asin: string,
   title: string,
+  format: OutputFormat = DEFAULT_OUTPUT_FORMAT,
 ): string[] {
-  const bookDir = path.join(outputDir, getBookDirName(asin, title));
+  const bookDir = path.join(outputDir, getBookDirName(asin, title, format));
   if (!fs.existsSync(bookDir)) return [];
   return fs.readdirSync(bookDir).filter((f) =>
     AUDIO_EXTENSIONS.some((ext) => f.endsWith(`.${ext}`)),
@@ -228,6 +335,7 @@ export class Converter {
   activationBytes: string;
   force: boolean;
   audioSettings: AudioSettings;
+  outputFormat: OutputFormat;
   private reporter: ProgressReporter;
 
   constructor(
@@ -237,6 +345,7 @@ export class Converter {
     reporter: ProgressReporter = consoleReporter,
     force: boolean = false,
     audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS,
+    outputFormat: OutputFormat = DEFAULT_OUTPUT_FORMAT,
   ) {
     this.reporter = reporter;
     this.force = force;
@@ -250,6 +359,7 @@ export class Converter {
     // carry their own per-file voucher. Checked per book at convert time.
     this.activationBytes = activationBytes;
     this.audioSettings = audioSettings;
+    this.outputFormat = outputFormat;
 
     this.ensureOutputDirectory();
   }
@@ -403,6 +513,11 @@ export class Converter {
   ): Promise<boolean> {
     const chapters = this.flattenChapters(chapterData.content_metadata.chapter_info.chapters);
     const ext = audioExtension(this.audioSettings.format);
+    const bookValues = bookTagValues(
+      asin ? getAudiobookByAsin(asin) : undefined,
+      tags?.album || "",
+      asin || "",
+    );
 
     if (!fs.existsSync(bookDir)) {
       fs.mkdirSync(bookDir, { recursive: true });
@@ -414,13 +529,14 @@ export class Converter {
     for (let i = 0; i < chapters.length; i++) {
       const chapter = chapters[i];
       const chapterNumber = (i + 1).toString().padStart(2, "0");
-      const chapterTitle = this.sanitizeFilename(
-        chapter.title || `Chapter ${chapterNumber}`,
+      const rawChapterName = chapter.title || `Chapter ${chapterNumber}`;
+      const chapterTitle = this.sanitizeFilename(rawChapterName);
+      const filenameBase = renderFilenameBase(
+        this.outputFormat,
+        { ...bookValues, chapterNumber, chapterName: rawChapterName },
+        `${chapterNumber} - ${rawChapterName}`,
       );
-      const outputFile = path.join(
-        bookDir,
-        `${chapterNumber} - ${chapterTitle}.${ext}`,
-      );
+      const outputFile = path.join(bookDir, `${filenameBase}.${ext}`);
 
       const splitPct = Math.round(((i + 1) / chapters.length) * 100);
 
@@ -600,7 +716,7 @@ export class Converter {
   }
 
   getBookDirName(asin: string, bookTitle: string): string {
-    return getBookDirName(asin, bookTitle);
+    return getBookDirName(asin, bookTitle, this.outputFormat);
   }
 
   async convertBook(
@@ -614,7 +730,7 @@ export class Converter {
     this.reporter.log(`\nProcessing book: ${asin}`);
     this.reporter.bookStart?.(asin);
 
-    if (!this.force && findConvertedChapters(this.outputDir, asin, bookTitle).length > 0) {
+    if (!this.force && findConvertedChapters(this.outputDir, asin, bookTitle, this.outputFormat).length > 0) {
       this.reporter.log(
         `Book already converted (output files exist): ${bookTitle || asin}`,
       );

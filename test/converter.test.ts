@@ -17,10 +17,19 @@ import {
   AUDIO_QUALITIES,
   AUDIO_PRESETS,
   DEFAULT_AUDIO_SETTINGS,
+  renderRow,
+  renderDirectorySegments,
+  renderFilenameBase,
+  bookTagValues,
+  getBookDirName,
+  DEFAULT_OUTPUT_FORMAT,
+  BOOK_TAGS,
+  CHAPTER_TAGS,
   type ChapterInfo,
   type ChapterData,
+  type OutputFormat,
 } from "../src/converter.ts";
-import { closeDb } from "../src/db.ts";
+import { closeDb, upsertBook, getAudiobookByAsin } from "../src/db.ts";
 
 let dbDir: string;
 
@@ -96,6 +105,154 @@ describe("Converter.getBookDirName", () => {
   it("falls back to ASIN when title is empty", () => {
     assert.equal(converter.getBookDirName("B001234567", ""), "Book_B001234567");
   });
+
+  it("nests folders per a custom directory template, from database metadata", () => {
+    upsertBook("B0TEMPLATE1", {
+      author: "Brandon Sanderson",
+      title: "The Final Empire",
+      seriesTitle: "Mistborn",
+      seriesSequence: "1",
+    });
+    const format: OutputFormat = {
+      directory: [
+        [{ type: "tag", value: "author" }],
+        [{ type: "tag", value: "series" }],
+        [
+          { type: "tag", value: "series" },
+          { type: "text", value: " - " },
+          { type: "tag", value: "seriesEntry" },
+          { type: "text", value: " - " },
+          { type: "tag", value: "title" },
+        ],
+      ],
+      filename: DEFAULT_OUTPUT_FORMAT.filename,
+    };
+    assert.equal(
+      getBookDirName("B0TEMPLATE1", "The Final Empire", format),
+      path.join("Brandon Sanderson", "Mistborn", "Mistborn - 1 - The Final Empire"),
+    );
+  });
+
+  it("drops empty folder levels instead of creating empty directories", () => {
+    // No series in the database for this one.
+    upsertBook("B0NOSERIES1", { author: "Iain M. Banks", title: "Consider Phlebas" });
+    const format: OutputFormat = {
+      directory: [
+        [{ type: "tag", value: "author" }],
+        [{ type: "tag", value: "series" }],
+        [{ type: "tag", value: "title" }],
+      ],
+      filename: DEFAULT_OUTPUT_FORMAT.filename,
+    };
+    assert.equal(
+      getBookDirName("B0NOSERIES1", "Consider Phlebas", format),
+      path.join("Iain M. Banks", "Consider Phlebas"),
+      "the empty {Series} level is skipped, not rendered as an empty folder",
+    );
+  });
+
+  it("falls back to the ASIN when every level renders empty", () => {
+    const format: OutputFormat = {
+      directory: [[{ type: "tag", value: "series" }]],
+      filename: DEFAULT_OUTPUT_FORMAT.filename,
+    };
+    assert.equal(
+      getBookDirName("B0NOMATCH01", "", format),
+      "Book_B0NOMATCH01",
+    );
+  });
+
+  it("prefers the passed bookTitle over the database row's title", () => {
+    upsertBook("B0PREFER001", { author: "A", title: "DB Title" });
+    const format: OutputFormat = { directory: [[{ type: "tag", value: "title" }]], filename: DEFAULT_OUTPUT_FORMAT.filename };
+    assert.equal(getBookDirName("B0PREFER001", "Fresh Title", format), "Fresh Title");
+  });
+});
+
+describe("output format templates", () => {
+  it("renderRow concatenates tags and literal text in order", () => {
+    const row = [
+      { type: "tag" as const, value: "author" },
+      { type: "text" as const, value: " - " },
+      { type: "tag" as const, value: "title" },
+    ];
+    assert.equal(renderRow(row, { author: "Iain Banks", title: "Consider Phlebas" }), "Iain Banks - Consider Phlebas");
+  });
+
+  it("renderRow treats a missing tag value as empty, not literal", () => {
+    const row = [{ type: "tag" as const, value: "series" }];
+    assert.equal(renderRow(row, {}), "");
+  });
+
+  it("renderDirectorySegments sanitizes each level and drops empty ones", () => {
+    const format: OutputFormat = {
+      directory: [
+        [{ type: "tag", value: "author" }],
+        [{ type: "tag", value: "series" }],
+        [{ type: "tag", value: "title" }],
+      ],
+      filename: [],
+    };
+    const segments = renderDirectorySegments(format, {
+      author: "A: B",
+      series: "",
+      title: "Title",
+    });
+    assert.deepEqual(segments, ["A B", "Title"]);
+  });
+
+  it("renderFilenameBase falls back when the whole template renders empty", () => {
+    const format: OutputFormat = { directory: [], filename: [{ type: "tag", value: "chapterName" }] };
+    assert.equal(renderFilenameBase(format, { chapterName: "" }, "01 - Chapter 01"), "01 - Chapter 01");
+  });
+
+  it("renderFilenameBase sanitizes the rendered result", () => {
+    const format: OutputFormat = { directory: [], filename: [{ type: "tag", value: "chapterName" }] };
+    assert.equal(renderFilenameBase(format, { chapterName: 'A: "Title"' }, "fallback"), "A Title");
+  });
+
+  it("bookTagValues pulls every tag from the database row, keyed as the tag catalog expects", () => {
+    upsertBook("B0ALLTAGS01", {
+      author: "Author Name",
+      title: "DB Title",
+      narrators: "Narrator Name",
+      language: "English",
+      seriesTitle: "Series Name",
+      seriesSequence: "2",
+      releaseDate: "2010-05-01",
+    });
+    const row = getAudiobookByAsin("B0ALLTAGS01");
+    const values = bookTagValues(row, "", "B0ALLTAGS01");
+    assert.equal(values.author, "Author Name");
+    assert.equal(values.title, "DB Title");
+    assert.equal(values.narrator, "Narrator Name");
+    assert.equal(values.language, "English");
+    assert.equal(values.series, "Series Name");
+    assert.equal(values.seriesEntry, "2");
+    assert.equal(values.year, "2010");
+    assert.equal(values.asin, "B0ALLTAGS01");
+  });
+
+  it("bookTagValues degrades gracefully with no database row at all", () => {
+    const values = bookTagValues(undefined, "Fallback Title", "B0NOROW001");
+    assert.equal(values.title, "Fallback Title");
+    assert.equal(values.author, "");
+    assert.equal(values.asin, "B0NOROW001");
+  });
+
+  it("every advertised tag key actually resolves to a value bookTagValues produces", () => {
+    const values = bookTagValues(undefined, "T", "ASIN0000001");
+    for (const tag of BOOK_TAGS) {
+      assert.ok(tag.key in values, `${tag.key} (${tag.label}) has no corresponding value`);
+    }
+  });
+
+  it("DEFAULT_OUTPUT_FORMAT's filename template matches the historic '{number} - {name}' layout", () => {
+    assert.equal(
+      renderRow(DEFAULT_OUTPUT_FORMAT.filename, { chapterNumber: "03", chapterName: "The Escape" }),
+      "03 - The Escape",
+    );
+  });
 });
 
 describe("findConvertedChapters", () => {
@@ -142,6 +299,24 @@ describe("findConvertedChapters", () => {
     fs.writeFileSync(path.join(outDir, "My Book", "02 - Ch 2.m4a"), "");
     fs.writeFileSync(path.join(outDir, "My Book", "cover.jpg"), "");
     assert.equal(findConvertedChapters(outDir, "B001234567", "My Book").length, 2);
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("looks inside a nested folder when given a multi-level directory template", () => {
+    upsertBook("B0NESTED001", { author: "Iain M. Banks", title: "Consider Phlebas" });
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-fc-out-"));
+    const nested = path.join(outDir, "Iain M. Banks", "Consider Phlebas");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, "01 - Ch 1.mp3"), "");
+
+    const format: OutputFormat = {
+      directory: [[{ type: "tag", value: "author" }], [{ type: "tag", value: "title" }]],
+      filename: DEFAULT_OUTPUT_FORMAT.filename,
+    };
+    assert.equal(
+      findConvertedChapters(outDir, "B0NESTED001", "Consider Phlebas", format).length,
+      1,
+    );
     fs.rmSync(outDir, { recursive: true, force: true });
   });
 });

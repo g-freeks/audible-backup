@@ -890,6 +890,117 @@ describe("audio quality settings", () => {
   });
 });
 
+describe("output naming settings", () => {
+  async function signedIn(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("renders the default template, the tag catalog, and an empty live preview placeholder", async () => {
+    const cookie = await signedIn("karen");
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+
+    assert.match(html, /id="directory-rows"/);
+    assert.match(html, /id="filename-row"/);
+    assert.match(html, /id="format-preview"/);
+    assert.match(html, /id="output-format-json"[^>]*value='[^']*&quot;title&quot;[^']*'/, "default template (Title-only) embedded");
+    assert.match(html, /data-book-tags="[^"]*Series Entry #[^"]*"/, "the tag catalog is embedded for the client to use");
+
+    const directoryHtml = html.slice(html.indexOf('id="directory-rows"'), html.indexOf('id="add-folder-level"'));
+    const filenameHtml = html.slice(html.indexOf('id="filename-row"'), html.indexOf('id="format-preview"'));
+    assert.ok(!directoryHtml.includes('value="chapterNumber"'), "chapter tags not offered for folder levels");
+    assert.ok(filenameHtml.includes('value="chapterNumber"'), "chapter tags offered for the filename");
+  });
+
+  it("saves a valid custom template", async () => {
+    const cookie = await signedIn("leo");
+    const template = {
+      directory: [
+        [{ type: "tag", value: "author" }],
+        [{ type: "tag", value: "series" }],
+      ],
+      filename: [
+        { type: "tag", value: "chapterNumber" },
+        { type: "text", value: ". " },
+        { type: "tag", value: "chapterName" },
+      ],
+    };
+    const res = await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ output_format_json: JSON.stringify(template) }),
+    });
+    assert.equal(res.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("leo")?.outputFormat, template);
+  });
+
+  it("ignores malformed JSON instead of crashing or saving garbage", async () => {
+    const cookie = await signedIn("mallory");
+    const res = await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ output_format_json: "{not valid json" }),
+    });
+    assert.equal(res.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("mallory")?.outputFormat, undefined);
+  });
+
+  it("drops unknown tag keys and rejects chapter-only tags outside the filename row", async () => {
+    const cookie = await signedIn("nate");
+    const template = {
+      directory: [
+        [
+          { type: "tag", value: "author" },
+          { type: "tag", value: "totallyMadeUp" },
+          { type: "tag", value: "chapterNumber" },
+        ],
+      ],
+      filename: [{ type: "tag", value: "chapterNumber" }],
+    };
+    await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ output_format_json: JSON.stringify(template) }),
+    });
+
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("nate")?.outputFormat?.directory, [[{ type: "tag", value: "author" }]]);
+  });
+
+  it("a saved multi-level template actually changes where a converted book is found", async () => {
+    const cookie = await signedIn("olivia");
+    const template = {
+      directory: [[{ type: "tag", value: "author" }], [{ type: "tag", value: "title" }]],
+      filename: [{ type: "tag", value: "chapterName" }],
+    };
+    await app.request("/user/settings", {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({ output_format_json: JSON.stringify(template) }),
+    });
+
+    const { runWithUser, userDirs } = await import("../src/users.ts");
+    runWithUser("olivia", () => {
+      upsertBook("B0OUTFMT001", { author: "Iain M. Banks", title: "Consider Phlebas" });
+      markDownloaded("B0OUTFMT001", "Iain M. Banks", "Consider Phlebas", "/x/B0OUTFMT001.aaxc");
+    });
+    const nested = path.join(userDirs("olivia").outputDir, "Iain M. Banks", "Consider Phlebas");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, "Prologue.mp3"), "");
+
+    const status = await (await app.request("/api/status", { headers: { cookie } })).json();
+    assert.equal(status.converted, 1, "found under the nested author/title path the template describes");
+  });
+});
+
 // --- htmx attribute inheritance regression ---
 
 describe("action buttons are not affected by inherited hx-select", () => {

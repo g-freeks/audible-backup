@@ -6,9 +6,13 @@ import {
   AUDIO_QUALITIES,
   AUDIO_PRESETS,
   audioArgsString,
+  BOOK_TAGS,
+  CHAPTER_TAGS,
   type AudioSettings,
   type AudioFormat,
   type AudioQuality,
+  type OutputFormat,
+  type FormatRow,
 } from "../../converter.ts";
 
 export interface UserListEntry {
@@ -72,6 +76,41 @@ const formStyles = `
     .switch input:checked + .switch-track { background: var(--accent); }
     .switch input:checked + .switch-track .switch-thumb { transform: translateX(1rem); }
     .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .format-section { margin-top: 0.6rem; }
+    .format-section label { display: block; margin-bottom: 0.3rem; }
+    #directory-rows, #filename-row { display: flex; flex-direction: column; gap: 0.4rem; }
+    .format-row {
+      display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.4rem 0.5rem;
+    }
+    .format-row-grip { cursor: grab; color: var(--text-muted); font-size: 0.9rem; user-select: none; line-height: 1; }
+    .format-row-grip:active { cursor: grabbing; }
+    .format-blocks { display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1; min-height: 1.6rem; align-items: center; }
+    .format-chip {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.15rem 0.4rem; font-size: 0.8rem; cursor: grab;
+    }
+    .format-chip:active { cursor: grabbing; }
+    .format-chip.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+    .format-chip-label { white-space: nowrap; }
+    .format-chip-text .chip-text-input {
+      background: transparent; border: none; padding: 0; font-size: 0.8rem;
+      color: var(--text); outline: none; width: auto;
+    }
+    .chip-remove {
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 0.85rem; line-height: 1; padding: 0;
+    }
+    .chip-remove:hover { color: var(--danger); }
+    .format-row-controls { display: flex; align-items: center; gap: 0.3rem; }
+    .format-add-tag { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.8rem; padding: 0.25rem 0.4rem; }
+    .format-preview {
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 0.85rem; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.6rem 0.75rem; word-break: break-word;
+    }
     .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
     .danger-zone h2 { color: var(--danger); }
   </style>
@@ -149,6 +188,7 @@ export interface SettingsView {
    * auto-triggered sync) is already running for this user. */
   operationRunning?: boolean;
   audioSettings: AudioSettings;
+  outputFormat: OutputFormat;
 }
 
 const MARKETPLACES: [string, string][] = [
@@ -274,6 +314,92 @@ function qualitySection(settings: AudioSettings): string {
   `;
 }
 
+const ALL_TAGS = [...BOOK_TAGS, ...CHAPTER_TAGS];
+function tagLabel(key: string): string {
+  return ALL_TAGS.find((t) => t.key === key)?.label || key;
+}
+
+/** One chip per segment: a removable tag, or an editable+removable literal
+ * text block. Both are draggable — reordering and moving between rows is
+ * handled client-side (app.js), which rebuilds this exact markup from its
+ * in-memory state after every change. */
+function formatChipHtml(section: "directory" | "filename", rowIndex: number, blockIndex: number, seg: FormatRow[number]): string {
+  const removeBtn = `<button type="button" class="chip-remove" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}" aria-label="Remove">&times;</button>`;
+  if (seg.type === "tag") {
+    return `<span class="format-chip" draggable="true" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}">
+      <span class="format-chip-label">${escapeHtml(tagLabel(seg.value))}</span>${removeBtn}
+    </span>`;
+  }
+  return `<span class="format-chip format-chip-text" draggable="true" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}">
+    <input type="text" class="chip-text-input" value="${escapeHtml(seg.value)}" size="${Math.max(2, seg.value.length)}" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}">${removeBtn}
+  </span>`;
+}
+
+/** One folder level, or the (single) filename row. `rowDraggable` offers a
+ * grip handle to reorder folder levels relative to each other. */
+function formatRowHtml(
+  section: "directory" | "filename",
+  rowIndex: number,
+  row: FormatRow,
+  availableTags: { key: string; label: string }[],
+  removable: boolean,
+  rowDraggable: boolean,
+): string {
+  const chips = row.map((seg, i) => formatChipHtml(section, rowIndex, i, seg)).join("");
+  const options = availableTags.map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join("");
+  const grip = rowDraggable
+    ? `<span class="format-row-grip" draggable="true" data-row-drag="true" data-section="${section}" data-row-index="${rowIndex}" title="Drag to reorder folder levels">&#8942;&#8942;</span>`
+    : "";
+  const removeRow = removable
+    ? `<button type="button" class="btn btn-sm btn-ghost format-remove-row" data-section="${section}" data-row-index="${rowIndex}" title="Remove this folder level">&times;</button>`
+    : "";
+  return `<div class="format-row" data-section="${section}" data-row-index="${rowIndex}">
+    ${grip}
+    <div class="format-blocks" data-section="${section}" data-row-index="${rowIndex}">${chips}</div>
+    <div class="format-row-controls">
+      <select class="format-add-tag" data-section="${section}" data-row-index="${rowIndex}">
+        <option value="">+ Tag</option>
+        ${options}
+      </select>
+      <button type="button" class="btn btn-sm btn-ghost format-add-text" data-section="${section}" data-row-index="${rowIndex}">+ Text</button>
+      ${removeRow}
+    </div>
+  </div>`;
+}
+
+/**
+ * Tag-based directory/filename templates, arranged and reordered by
+ * dragging (client JS in app.js — this only renders the starting state and
+ * embeds the tag catalog + current template as data for it to pick up).
+ * The preview is entirely client-side against a fixed sample book.
+ */
+function outputFormatSection(format: OutputFormat): string {
+  const directoryRows = format.directory
+    .map((row, i) => formatRowHtml("directory", i, row, BOOK_TAGS, format.directory.length > 1, true))
+    .join("");
+  const filenameRow = formatRowHtml("filename", 0, format.filename, ALL_TAGS, false, false);
+
+  return `
+    <div class="format-section">
+      <label>Folder structure <span class="hint">(each level becomes one folder; empty levels — e.g. no series — are skipped)</span></label>
+      <div id="directory-rows">${directoryRows}</div>
+      <button type="button" id="add-folder-level" class="btn btn-sm btn-ghost">+ Add folder level</button>
+    </div>
+    <div class="format-section">
+      <label>Chapter filename</label>
+      <div id="filename-row">${filenameRow}</div>
+    </div>
+    <div class="format-section">
+      <label>Preview</label>
+      <div id="format-preview" class="format-preview" aria-live="polite"></div>
+    </div>
+    <input type="hidden" name="output_format_json" id="output-format-json" value='${escapeHtml(JSON.stringify(format))}'>
+    <div id="output-format-tags-data" hidden
+         data-book-tags="${escapeHtml(JSON.stringify(BOOK_TAGS))}"
+         data-chapter-tags="${escapeHtml(JSON.stringify(CHAPTER_TAGS))}"></div>
+  `;
+}
+
 export function settingsPage(view: SettingsView): string {
   const { userName, activationBytes, hasPassword, message, error, userNav, desktop, operationRunning } = view;
   const content = `
@@ -301,6 +427,9 @@ export function settingsPage(view: SettingsView): string {
 
           <h2 style="margin-top:1rem">Conversion quality</h2>
           ${qualitySection(view.audioSettings)}
+
+          <h2 style="margin-top:1rem">Output naming</h2>
+          ${outputFormatSection(view.outputFormat)}
 
           <button class="btn btn-primary" type="submit">Save</button>
         </form>

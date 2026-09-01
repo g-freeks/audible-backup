@@ -3,7 +3,7 @@
 import { execSync } from "child_process";
 import { config } from "./src/config.ts";
 import { AudibleLibrary } from "./src/library.ts";
-import { Converter, findConvertedChapters, DEFAULT_AUDIO_SETTINGS } from "./src/converter.ts";
+import { Converter, findConvertedChapters, DEFAULT_AUDIO_SETTINGS, DEFAULT_OUTPUT_FORMAT } from "./src/converter.ts";
 import { consoleReporter } from "./src/progress.ts";
 import {
   closeDb,
@@ -98,6 +98,7 @@ Examples:
     user?.activationBytes ||
     config.activationBytes;
   const audioSettings = user?.audioSettings || DEFAULT_AUDIO_SETTINGS;
+  const outputFormat = user?.outputFormat || DEFAULT_OUTPUT_FORMAT;
   const force = args.includes("--force");
 
   const run = user
@@ -133,7 +134,7 @@ Examples:
         break;
       }
       case "convert": {
-        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force, audioSettings);
+        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force, audioSettings, outputFormat);
         const asinArg = args.find((a) => a.match(/^[A-Z0-9]{10}$/));
         if (asinArg) {
           const books = converter.findBookFiles();
@@ -163,7 +164,7 @@ Examples:
         const library = new AudibleLibrary(targetDir);
         const newBooks = await library.sync(force);
         await library.downloadBooks(newBooks, force);
-        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force, audioSettings);
+        const converter = new Converter(targetDir, outputDir, activationBytes, consoleReporter, force, audioSettings, outputFormat);
         await converter.convertAll();
         break;
       }
@@ -187,7 +188,7 @@ Examples:
           for (const book of all) {
             let status = "not-downloaded";
             if (book.downloaded_at) {
-              const converted = findConvertedChapters(outputDir, book.asin, book.title || "").length > 0;
+              const converted = findConvertedChapters(outputDir, book.asin, book.title || "", outputFormat).length > 0;
               if (converted) convertedCount++;
               status = converted ? "converted" : "downloaded";
             }
