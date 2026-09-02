@@ -6,6 +6,7 @@ import {
   seedBooks,
   seedManyBooks,
   seedLongAuthor,
+  seedSeriesBooks,
   type UiContext,
 } from "./fixture.ts";
 
@@ -748,6 +749,53 @@ describe("search field", () => {
     assert.equal(await ui.page.inputValue("#search-input"), "");
     assert.equal(await ui.page.locator("#books-table tbody tr").count(), 3);
     assert.equal(await ui.page.locator("#search-clear").count(), 0);
+  });
+});
+
+describe("per-column filtering", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedSeriesBooks);
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+    await ui.page.waitForSelector("#books-table tbody tr");
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  function headerFilterButton(name: string): Locator {
+    return ui.page.locator("th", { hasText: name }).locator(".th-filter-btn");
+  }
+
+  it("facets Series on the bare series name, not the '#N' entry label", async () => {
+    await headerFilterButton("Series").click();
+    const options = await ui.page.locator(".column-filter-list label").allInnerTexts();
+    assert.deepEqual(options.map((o) => o.replace(/\s*\(\d+\)$/, "")), ["Mistborn"]);
+
+    await ui.page.locator(".column-filter-list label", { hasText: "Mistborn" }).locator("input").check();
+    const titles = await ui.page.locator("#books-table tbody td.col-title").allInnerTexts();
+    assert.deepEqual(titles.sort(), ["The Final Empire", "The Well of Ascension"]);
+
+    await ui.page.locator(".column-filter-list label", { hasText: "Mistborn" }).locator("input").uncheck();
+    await ui.page.keyboard.press("Escape");
+  });
+
+  it("facets Author with a checkbox list", async () => {
+    await headerFilterButton("Author").click();
+    const options = await ui.page.locator(".column-filter-list label").allInnerTexts();
+    assert.deepEqual(
+      options.map((o) => o.replace(/\s*\(\d+\)$/, "")).sort(),
+      ["Brandon Sanderson", "Ursula K. Le Guin"],
+    );
+
+    await ui.page.locator(".column-filter-list label", { hasText: "Ursula" }).locator("input").check();
+    const titles = await ui.page.locator("#books-table tbody td.col-title").allInnerTexts();
+    assert.deepEqual(titles, ["The Left Hand of Darkness"]);
+
+    await ui.page.locator(".column-filter-list label", { hasText: "Ursula" }).locator("input").uncheck();
+    await ui.page.keyboard.press("Escape");
   });
 });
 

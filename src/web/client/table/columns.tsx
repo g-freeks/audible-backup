@@ -71,18 +71,24 @@ export const columns = [
     enableHiding: false,
     meta: { label: "Title" },
   }),
-  helper.accessor((row) => seriesLabel(row), {
+  // Filters/sorts on the bare series name (series_title), not the "Title
+  // #N" label seriesLabel() renders — faceting on the combined label would
+  // split one series into one facet option per book (one per entry
+  // number). The displayed cell still shows the full label; see
+  // BooksTable.tsx's "series" cell, which calls seriesLabel() directly off
+  // the row data rather than this column's value.
+  helper.accessor("series_title", {
     id: "series",
     header: "Series",
     sortingFn: "alphanumeric",
-    filterFn: "includesString",
+    filterFn: "arrHas",
     meta: { label: "Series" },
   }),
   helper.accessor("author", {
     id: "author",
     header: "Author",
     sortingFn: "alphanumeric",
-    filterFn: "includesString",
+    filterFn: "arrHas",
     meta: { label: "Author" },
   }),
   helper.accessor("narrators", {
@@ -170,6 +176,6 @@ export const HIDEABLE_COLUMN_IDS = columns
   .map((c) => c.id as string);
 
 /** Columns offering a faceted (checkbox-list) filter rather than free text. */
-export const FACETED_COLUMN_IDS = new Set(["status", "format", "language"]);
+export const FACETED_COLUMN_IDS = new Set(["status", "format", "language", "author", "series"]);
 export const DATE_COLUMN_IDS = new Set(["downloaded", "purchased", "released"]);
 export const NUMBER_COLUMN_IDS = new Set(["runtime", "chapters"]);
