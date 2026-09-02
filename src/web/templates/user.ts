@@ -35,6 +35,7 @@ const formStyles = `
     .auth-card .user-row input[type=password] { flex: 1; }
     .auth-card input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; outline: none; }
     .auth-card input:focus { border-color: var(--accent); }
+    .auth-card input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--surface2); }
     .auth-card label { font-size: 0.8rem; color: var(--text-muted); }
     .auth-card .hint { font-size: 0.75rem; color: var(--text-muted); }
     .auth-error { color: var(--danger); margin-bottom: 1rem; font-size: 0.9rem; }
@@ -50,6 +51,27 @@ const formStyles = `
     .build-line { margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
     .btn-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
     .quality-section label:not(:first-child) { margin-top: 0.4rem; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.4rem; }
+    .setting-row label { margin: 0; }
+    /* Sliding toggle: a real checkbox, visually hidden, driving a track+thumb
+       sibling via :checked — stays a native, keyboard- and screen-reader-
+       accessible control, just repainted. */
+    .switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+    .switch input {
+      position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; padding: 0;
+    }
+    .switch-track {
+      width: 2.25rem; height: 1.25rem; background: var(--border); border-radius: 999px;
+      position: relative; transition: background 0.15s;
+    }
+    .switch-thumb {
+      position: absolute; top: 2px; left: 2px; width: 1.05rem; height: 1.05rem;
+      background: #fff; border-radius: 50%; transition: transform 0.15s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+    .switch input:checked + .switch-track { background: var(--accent); }
+    .switch input:checked + .switch-track .switch-thumb { transform: translateX(1rem); }
+    .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
     .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
     .danger-zone h2 { color: var(--danger); }
   </style>
@@ -237,12 +259,14 @@ function qualitySection(settings: AudioSettings): string {
       <input type="hidden" name="audio_format" id="audio-format-input" value="${settings.format}">
       <input type="hidden" name="audio_quality" id="audio-quality-input" value="${settings.quality}">
 
-      <label for="audio-args">ffmpeg audio args</label>
-      <input id="audio-args" name="audio_args" value="${escapeHtml(argsString)}" ${hasCustom ? "" : "readonly"} placeholder="-c:a libmp3lame -b:a 128k">
-      <div class="checkbox-row">
-        <input id="audio-custom-toggle" name="audio_custom_enabled" type="checkbox" value="true" ${hasCustom ? "checked" : ""}>
-        <label for="audio-custom-toggle">Edit the ffmpeg command manually</label>
+      <div class="setting-row">
+        <label for="audio-args">ffmpeg audio args</label>
+        <label class="switch" title="Edit the ffmpeg command manually">
+          <input id="audio-custom-toggle" name="audio_custom_enabled" type="checkbox" value="true" ${hasCustom ? "checked" : ""} aria-label="Edit the ffmpeg command manually">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
       </div>
+      <input id="audio-args" name="audio_args" value="${escapeHtml(argsString)}" ${hasCustom ? "" : "disabled"} placeholder="-c:a libmp3lame -b:a 128k">
       <div id="audio-presets-data" hidden
            data-presets="${escapeHtml(JSON.stringify(presetStrings))}"
            data-estimates="${escapeHtml(JSON.stringify(estimateStrings))}"></div>

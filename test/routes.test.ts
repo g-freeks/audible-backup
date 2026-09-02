@@ -812,7 +812,7 @@ describe("audio quality settings", () => {
     for (const quality of ["low", "medium", "high"]) {
       assert.match(html, new RegExp(`data-audio-quality="${quality}"`));
     }
-    assert.match(html, /id="audio-args"[^>]*readonly/, "read-only until the manual toggle is checked");
+    assert.match(html, /id="audio-args"[^>]*disabled/, "disabled (and visibly so) until the manual toggle is checked");
     assert.match(html, /id="audio-presets-data"/);
   });
 
@@ -857,7 +857,7 @@ describe("audio quality settings", () => {
     const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
     assert.match(html, /id="audio-custom-toggle"[^>]*checked/);
     assert.match(html, /id="audio-args"[^>]*value="-c:a libmp3lame -q:a 0"/);
-    assert.ok(!/id="audio-args"[^>]*readonly/.test(html), "editable once a custom override is saved");
+    assert.ok(!/id="audio-args"[^>]*disabled/.test(html), "editable once a custom override is saved");
   });
 
   it("ignores audio_args when the manual toggle isn't checked", async () => {
