@@ -505,6 +505,198 @@ describe("Audible sign-in from the settings page", () => {
   });
 });
 
+describe("conversion quality settings", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi();
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+    await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("clicking a format button updates the args field and its own selected state", async () => {
+    const argsInput = ui.page.locator("#audio-args");
+    assert.match(await argsInput.inputValue(), /libmp3lame/, "starts on the mp3 default");
+
+    await ui.page.click('[data-audio-format="flac"]');
+    assert.match(await argsInput.inputValue(), /flac/);
+    assert.equal(await ui.page.locator('[data-audio-format="flac"]').getAttribute("aria-pressed"), "true");
+    assert.equal(await ui.page.locator('[data-audio-format="mp3"]').getAttribute("aria-pressed"), "false");
+  });
+
+  it("clicking a quality button updates the args field and its tooltip reflects the current format", async () => {
+    await ui.page.click('[data-audio-format="aac"]');
+    await ui.page.click('[data-audio-quality="high"]');
+
+    const argsInput = ui.page.locator("#audio-args");
+    assert.equal(await argsInput.inputValue(), "-c:a aac -b:a 192k");
+    const tooltip = await ui.page.locator('[data-audio-quality="high"]').getAttribute("title");
+    assert.match(tooltip || "", /86 MB/, "tooltip re-estimated for the now-selected format (aac), not mp3");
+  });
+
+  it("the args field stays visibly disabled until the sliding toggle is switched on", async () => {
+    const argsInput = ui.page.locator("#audio-args");
+    const track = ui.page.locator(".switch-track");
+    assert.equal(await argsInput.isDisabled(), true);
+    assert.equal(await argsInput.evaluate((el) => getComputedStyle(el).opacity), "0.5", "reads as disabled, not just non-editable");
+    assert.equal(await track.evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0.09)", "toggle off");
+
+    // The checkbox itself is visually hidden — click the visible switch, the
+    // way a real user (and its wrapping <label>) would.
+    await ui.page.click(".switch");
+    assert.equal(await ui.page.locator("#audio-custom-toggle").isChecked(), true);
+    assert.equal(await argsInput.isDisabled(), false);
+    await ui.page.waitForFunction(
+      () => getComputedStyle(document.querySelector(".switch-track")).backgroundColor === "rgb(53, 132, 228)",
+      { timeout: 2000 },
+    ); // the 0.15s background transition needs a moment to settle
+    assert.equal(await track.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(53, 132, 228)", "toggle on (accent color)");
+
+    await argsInput.fill("-c:a libmp3lame -q:a 0");
+    await ui.page.click('form[action="/user/settings"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+
+    assert.equal(await ui.page.locator("#audio-args").inputValue(), "-c:a libmp3lame -q:a 0");
+    assert.equal(await ui.page.locator("#audio-custom-toggle").isChecked(), true);
+    assert.equal(await ui.page.locator("#audio-args").isDisabled(), false);
+  });
+
+  it("the args field and its toggle sit on their own row, above the (now full-width) text input", async () => {
+    const settingRow = ui.page.locator(".setting-row", { has: ui.page.locator('label[for="audio-args"]') });
+    assert.equal(await settingRow.count(), 1);
+    assert.equal(await settingRow.locator(".switch").count(), 1, "the toggle lives in the same row as the label");
+
+    const rowBottom = await settingRow.evaluate((el) => el.getBoundingClientRect().bottom);
+    const inputTop = await ui.page.locator("#audio-args").evaluate((el) => el.getBoundingClientRect().top);
+    assert.ok(inputTop >= rowBottom, "the text input sits below the label/toggle row, on its own line");
+  });
+});
+
+describe("output naming builder", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi();
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+    await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  function directoryRow(index: number) {
+    return ui.page.locator(`#directory-rows .format-row[data-row-index="${index}"]`);
+  }
+
+  it("starts with the default (Title-only, single folder) template and a matching preview", async () => {
+    assert.equal(await ui.page.locator("#directory-rows .format-row").count(), 1);
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title"]);
+    assert.deepEqual(
+      await ui.page.locator("#filename-row .format-chip-label").allInnerTexts(),
+      ["Chapter #", "Chapter Name"],
+    );
+    assert.equal(await ui.page.locator("#format-preview").innerText(), "The Final Empire / 01 - Prologue.mp3");
+  });
+
+  it("adding a tag via the row's select appends a chip and updates the preview live", async () => {
+    await directoryRow(0).locator(".format-add-tag").selectOption("author");
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title", "Author"]);
+    assert.match(await ui.page.locator("#format-preview").innerText(), /The Final EmpireBrandon Sanderson/);
+  });
+
+  it("+ Add folder level adds a new, independently-removable row", async () => {
+    // Row 0 ([Title, Author] from the previous test) is the only row so far.
+    await ui.page.click("#add-folder-level");
+    assert.equal(await ui.page.locator("#directory-rows .format-row").count(), 2);
+
+    await ui.page.selectOption('#directory-rows .format-row[data-row-index="1"] .format-add-tag', "series");
+    assert.deepEqual(await directoryRow(1).locator(".format-chip-label").allInnerTexts(), ["Series"]);
+
+    // Remove the level we just added, leaving row 0 untouched for later tests.
+    await directoryRow(1).locator(".format-remove-row").click();
+    assert.equal(await ui.page.locator("#directory-rows .format-row").count(), 1);
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title", "Author"]);
+  });
+
+  it("+ Text adds an editable literal block that flows into the preview as typed", async () => {
+    // + Text appends, so row 0 becomes [Title, Author, " - "].
+    await directoryRow(0).locator(".format-add-text").click();
+    const textInput = directoryRow(0).locator(".chip-text-input");
+    await textInput.fill(" -- ");
+    assert.match(await ui.page.locator("#format-preview").innerText(), /Brandon Sanderson --/);
+  });
+
+  it("removing a chip drops it from the row and the preview", async () => {
+    // Row 0 is [Title, Author, " | "] from the previous test — remove the
+    // text block (the third remove button, after Title's and Author's).
+    await directoryRow(0).locator(".chip-remove").nth(2).click();
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title", "Author"]);
+    assert.match(await ui.page.locator("#format-preview").innerText(), /The Final EmpireBrandon Sanderson/);
+  });
+
+  it("dragging a chip onto another reorders within the row", async () => {
+    // Row 0 is [Title, Author]; drag Author before Title.
+    const author = directoryRow(0).locator(".format-chip", { hasText: "Author" });
+    const title = directoryRow(0).locator(".format-chip", { hasText: "Title" });
+    await author.dragTo(title);
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Author", "Title"]);
+  });
+
+  it("dragging a chip into a different row moves it there", async () => {
+    // Row 1 exists (Series added and left empty by an earlier test's setup —
+    // ensure it has a known-empty state first).
+    await ui.page.click("#add-folder-level");
+    const newRowIndex = (await ui.page.locator("#directory-rows .format-row").count()) - 1;
+    const newRow = directoryRow(newRowIndex);
+
+    const title = directoryRow(0).locator(".format-chip", { hasText: "Title" });
+    const newRowZone = newRow.locator(".format-blocks");
+    await title.dragTo(newRowZone);
+
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Author"]);
+    assert.deepEqual(await newRow.locator(".format-chip-label").allInnerTexts(), ["Title"]);
+  });
+
+  it("dragging a folder level's grip handle reorders the levels", async () => {
+    const beforeOrder = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    const firstGrip = ui.page.locator('#directory-rows .format-row[data-row-index="0"] .format-row-grip');
+    const lastGrip = ui.page.locator("#directory-rows .format-row").last().locator(".format-row-grip");
+    await firstGrip.dragTo(lastGrip);
+
+    const afterOrder = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    assert.notDeepEqual(afterOrder, beforeOrder, "the level order actually changed");
+    assert.deepEqual(afterOrder[afterOrder.length - 1], beforeOrder[0], "the dragged level landed at the end");
+  });
+
+  it("saves the built template and reloads it exactly as left", async () => {
+    const before = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    await ui.page.click('form[action="/user/settings"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+
+    const after = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    assert.deepEqual(after, before);
+  });
+});
+
 describe("action menus are not clipped by the table container", () => {
   let ui: UiContext;
 

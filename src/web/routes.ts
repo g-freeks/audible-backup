@@ -5,7 +5,19 @@ import * as fs from "fs";
 import * as path from "path";
 import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, getAllBooks } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
-import { Converter, findConvertedChapters, getBookDirName } from "../converter.ts";
+import {
+  Converter,
+  findConvertedChapters,
+  getBookDirName,
+  DEFAULT_AUDIO_SETTINGS,
+  DEFAULT_OUTPUT_FORMAT,
+  isAudioFormat,
+  isAudioQuality,
+  BOOK_TAGS,
+  CHAPTER_TAGS,
+  type OutputFormat,
+  type FormatRow,
+} from "../converter.ts";
 import {
   isOperationRunning,
   getActiveOperation,
@@ -45,6 +57,8 @@ import {
   currentUserName,
   userDirs,
   setColumnPrefs,
+  setAudioSettings,
+  setOutputFormat,
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
@@ -127,7 +141,7 @@ function userListEntries() {
   return listUsers().map((u) => ({ name: u.name, hasPassword: userHasPassword(u) }));
 }
 
-/** Per-request paths and activation bytes: user-scoped or legacy config. */
+/** Per-request paths, activation bytes, and audio settings: user-scoped or legacy config. */
 function requestPaths() {
   const user = currentUser();
   if (user) {
@@ -136,12 +150,16 @@ function requestPaths() {
       targetDir: dirs.targetDir,
       outputDir: dirs.outputDir,
       activationBytes: user.activationBytes || config.activationBytes,
+      audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
+      outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
     };
   }
   return {
     targetDir: config.targetDir,
     outputDir: config.outputDir,
     activationBytes: config.activationBytes,
+    audioSettings: DEFAULT_AUDIO_SETTINGS,
+    outputFormat: DEFAULT_OUTPUT_FORMAT,
   };
 }
 
@@ -256,6 +274,8 @@ async function renderSettings(
     userNav: buildUserNav(),
     desktop: isDesktopMode(),
     operationRunning: currentOperationRunning(),
+    audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
+    outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
     ...extra,
   });
   return status ? c.html(html, status as 400) : c.html(html);
@@ -377,6 +397,49 @@ routes.post("/user/audible/cancel", (c) => {
   return renderSettings(c);
 });
 
+const VALID_TAG_KEYS = new Set([...BOOK_TAGS, ...CHAPTER_TAGS].map((t) => t.key));
+const CHAPTER_TAG_KEYS = new Set(CHAPTER_TAGS.map((t) => t.key));
+
+/** Chapter tags (e.g. {Chapter #}) only make sense per-chapter, so they're
+ * rejected outside the filename row even if a tampered request includes one. */
+function parseFormatRow(raw: unknown, allowChapterTags: boolean): FormatRow | null {
+  if (!Array.isArray(raw)) return null;
+  const row: FormatRow = [];
+  for (const seg of raw.slice(0, 30)) {
+    if (!seg || typeof seg !== "object") continue;
+    const type = (seg as Record<string, unknown>).type;
+    const value = (seg as Record<string, unknown>).value;
+    if (typeof value !== "string") continue;
+    if (type === "tag" && VALID_TAG_KEYS.has(value) && (allowChapterTags || !CHAPTER_TAG_KEYS.has(value))) {
+      row.push({ type: "tag", value });
+    } else if (type === "text") {
+      row.push({ type: "text", value: value.slice(0, 200) });
+    }
+  }
+  return row;
+}
+
+function parseOutputFormat(raw: string): OutputFormat | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  if (!Array.isArray(record.directory)) return null;
+
+  const directory: FormatRow[] = [];
+  for (const rowRaw of record.directory.slice(0, 10)) {
+    const row = parseFormatRow(rowRaw, false);
+    if (row) directory.push(row);
+  }
+  const filename = parseFormatRow(record.filename, true);
+  if (!filename) return null;
+  return { directory, filename };
+}
+
 routes.post("/user/settings", async (c) => {
   const user = currentUser();
   if (!user) return c.redirect("/login");
@@ -387,6 +450,23 @@ routes.post("/user/settings", async (c) => {
     password: String(body.password || "") || undefined,
     removePassword: body.remove_password === "true",
   });
+
+  const format = body.audio_format;
+  const quality = body.audio_quality;
+  if (isAudioFormat(format) && isAudioQuality(quality)) {
+    const customEnabled = body.audio_custom_enabled === "true";
+    const customArgs = String(body.audio_args || "").trim();
+    setAudioSettings(user.name, {
+      format,
+      quality,
+      ...(customEnabled && customArgs ? { customArgs } : {}),
+    });
+  }
+
+  if (typeof body.output_format_json === "string") {
+    const parsed = parseOutputFormat(body.output_format_json);
+    if (parsed) setOutputFormat(user.name, parsed);
+  }
 
   return renderSettings(c, { message: "Settings saved" });
 });
@@ -409,7 +489,7 @@ routes.get("/", (c) => {
   const convertedAsins = new Map<string, number>();
   for (const book of getAllBooks()) {
     if (!book.downloaded_at) continue;
-    const chapters = findConvertedChapters(paths.outputDir, book.asin, book.title || "");
+    const chapters = findConvertedChapters(paths.outputDir, book.asin, book.title || "", paths.outputFormat);
     if (chapters.length > 0) convertedAsins.set(book.asin, chapters.length);
   }
   return c.html(booksPage(convertibleAsins, convertedAsins, buildUserNav(), {
@@ -456,7 +536,7 @@ routes.get("/api/status", (c) => {
   let convertedCount = 0;
   for (const asin of downloaded) {
     const book = getAudiobookByAsin(asin);
-    if (book && findConvertedChapters(paths.outputDir, asin, book.title || "").length > 0) {
+    if (book && findConvertedChapters(paths.outputDir, asin, book.title || "", paths.outputFormat).length > 0) {
       convertedCount++;
     }
   }
@@ -515,7 +595,8 @@ routes.post("/api/delete/:asin", (c) => {
       }
     }
     // Delete output directory
-    const bookDir = path.join(requestPaths().outputDir, getBookDirName(asin, book.title || ""));
+    const deletePaths = requestPaths();
+    const bookDir = path.join(deletePaths.outputDir, getBookDirName(asin, book.title || "", deletePaths.outputFormat));
     if (fs.existsSync(bookDir)) {
       fs.rmSync(bookDir, { recursive: true, force: true });
     }
@@ -542,8 +623,8 @@ routes.get("/download/converted/:asin", (c) => {
 
   const book = getAudiobookByAsin(asin);
   const paths = requestPaths();
-  const bookDir = book ? path.join(paths.outputDir, getBookDirName(asin, book.title || "")) : "";
-  if (!book || findConvertedChapters(paths.outputDir, asin, book.title || "").length === 0) {
+  const bookDir = book ? path.join(paths.outputDir, getBookDirName(asin, book.title || "", paths.outputFormat)) : "";
+  if (!book || findConvertedChapters(paths.outputDir, asin, book.title || "", paths.outputFormat).length === 0) {
     return c.text("No converted files for this book", 404);
   }
 
@@ -753,7 +834,7 @@ routes.post("/library/download-all", async (c) => {
     const queued = converter.findBookFiles().filter((b) =>
       !ignoredAsins.has(b.asin) &&
       (!selectedAsins || selectedAsins.has(b.asin)) &&
-      findConvertedChapters(paths.outputDir, b.asin, b.bookTitle).length === 0,
+      findConvertedChapters(paths.outputDir, b.asin, b.bookTitle, paths.outputFormat).length === 0,
     );
     alreadyDownloadedQueuedSwaps = queued.map((b) => queuedSwap(b.asin)).join("");
   } catch {
@@ -773,6 +854,8 @@ routes.post("/library/download-all", async (c) => {
       paths.activationBytes,
       reporter,
       false,
+      paths.audioSettings,
+      paths.outputFormat,
     );
     await converter.convertAll(selectedAsins);
   };
@@ -820,12 +903,14 @@ routes.post("/convert/all", async (c) => {
       paths.activationBytes,
       reporter,
       force,
+      paths.audioSettings,
+      paths.outputFormat,
     );
 
     const ignoredAsins = getIgnoredAsins();
     const queuedBooks = converter.findBookFiles().filter((b) =>
       !ignoredAsins.has(b.asin) &&
-      (force || findConvertedChapters(paths.outputDir, b.asin, b.bookTitle).length === 0)
+      (force || findConvertedChapters(paths.outputDir, b.asin, b.bookTitle, paths.outputFormat).length === 0)
     );
     const oobSwaps = queuedBooks.map((b) => queuedSwap(b.asin)).join("");
 
@@ -881,6 +966,8 @@ routes.post("/convert/:asin", async (c) => {
       paths.activationBytes,
       reporter,
       force,
+      paths.audioSettings,
+      paths.outputFormat,
     );
     const books = converter.findBookFiles();
     const book = books.find((b) => b.asin === asin);
@@ -986,6 +1073,8 @@ routes.post("/prepare/:asin", async (c) => {
       paths.activationBytes,
       reporter,
       false,
+      paths.audioSettings,
+      paths.outputFormat,
     );
     const book = converter.findBookFiles().find((b) => b.asin === asin);
     if (!book) {

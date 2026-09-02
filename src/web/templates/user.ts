@@ -1,6 +1,19 @@
 import { layout, type UserNav } from "./layout.ts";
 import { versionLine } from "../../version.ts";
 import { escapeHtml } from "./html.ts";
+import {
+  AUDIO_FORMATS,
+  AUDIO_QUALITIES,
+  AUDIO_PRESETS,
+  audioArgsString,
+  BOOK_TAGS,
+  CHAPTER_TAGS,
+  type AudioSettings,
+  type AudioFormat,
+  type AudioQuality,
+  type OutputFormat,
+  type FormatRow,
+} from "../../converter.ts";
 
 export interface UserListEntry {
   name: string;
@@ -26,6 +39,7 @@ const formStyles = `
     .auth-card .user-row input[type=password] { flex: 1; }
     .auth-card input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; outline: none; }
     .auth-card input:focus { border-color: var(--accent); }
+    .auth-card input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--surface2); }
     .auth-card label { font-size: 0.8rem; color: var(--text-muted); }
     .auth-card .hint { font-size: 0.75rem; color: var(--text-muted); }
     .auth-error { color: var(--danger); margin-bottom: 1rem; font-size: 0.9rem; }
@@ -39,6 +53,72 @@ const formStyles = `
     .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
     .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
     .build-line { margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
+    .btn-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .quality-section label:not(:first-child) { margin-top: 0.4rem; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.4rem; }
+    .setting-row label { margin: 0; }
+    /* Sliding toggle: a real checkbox, visually hidden, driving a track+thumb
+       sibling via :checked — stays a native, keyboard- and screen-reader-
+       accessible control, just repainted. */
+    .switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+    .switch input {
+      position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; padding: 0;
+    }
+    .switch-track {
+      width: 2.25rem; height: 1.25rem; background: var(--border); border-radius: 999px;
+      position: relative; transition: background 0.15s;
+    }
+    .switch-thumb {
+      position: absolute; top: 2px; left: 2px; width: 1.05rem; height: 1.05rem;
+      background: #fff; border-radius: 50%; transition: transform 0.15s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+    .switch input:checked + .switch-track { background: var(--accent); }
+    .switch input:checked + .switch-track .switch-thumb { transform: translateX(1rem); }
+    .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .format-section { margin-top: 0.6rem; }
+    .format-section label { display: block; margin-bottom: 0.3rem; }
+    #directory-rows, #filename-row { display: flex; flex-direction: column; gap: 0.4rem; }
+    .format-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.4rem 0.5rem;
+    }
+    .format-row-main { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; }
+    .format-row-grip { cursor: grab; color: var(--text-muted); font-size: 0.9rem; user-select: none; line-height: 1; }
+    .format-row-grip:active { cursor: grabbing; }
+    .format-blocks {
+      display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1; min-width: 0; min-height: 1.6rem; align-items: center;
+      background: var(--surface); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 0.25rem 0.4rem;
+    }
+    .format-chip {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.15rem 0.4rem; font-size: 0.8rem; cursor: grab;
+    }
+    .format-chip:active { cursor: grabbing; }
+    .format-chip.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+    .format-chip-label { white-space: nowrap; }
+    .format-chip-text .chip-text-input {
+      background: transparent; border: none; padding: 0; font-size: 0.8rem;
+      color: var(--text); outline: none; width: auto;
+    }
+    .chip-remove {
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 0.85rem; line-height: 1; padding: 0;
+    }
+    .chip-remove:hover { color: var(--danger); }
+    .format-row-controls {
+      display: flex; align-items: center; gap: 0.3rem; flex-shrink: 0;
+      margin-left: auto; padding-left: 0.5rem; border-left: 1px solid var(--border);
+    }
+    .format-add-tag { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.8rem; padding: 0.25rem 0.4rem; }
+    .format-preview {
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 0.85rem; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.6rem 0.75rem; word-break: break-word;
+    }
     .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
     .danger-zone h2 { color: var(--danger); }
   </style>
@@ -115,6 +195,8 @@ export interface SettingsView {
   /** Lights up the topbar's log indicator when an operation (e.g. an
    * auto-triggered sync) is already running for this user. */
   operationRunning?: boolean;
+  audioSettings: AudioSettings;
+  outputFormat: OutputFormat;
 }
 
 const MARKETPLACES: [string, string][] = [
@@ -188,6 +270,146 @@ function audibleCard(audible: AudibleStatus): string {
   </div>`;
 }
 
+const FORMAT_LABELS: Record<AudioFormat, string> = { mp3: "MP3", flac: "FLAC", aac: "AAC" };
+const QUALITY_LABELS: Record<AudioQuality, string> = { low: "Low", medium: "Medium", high: "High" };
+
+/**
+ * Format/quality preset buttons, a live ffmpeg-args preview, and a toggle to
+ * hand-edit that string. The buttons mutate the args field directly (client
+ * JS in app.js, driven by the presets/estimates embedded below) — the toggle
+ * only controls whether the field accepts direct typing.
+ */
+function qualitySection(settings: AudioSettings): string {
+  const hasCustom = !!settings.customArgs?.trim();
+  const argsString = audioArgsString(settings);
+
+  const presetStrings: Record<string, Record<string, string>> = {};
+  const estimateStrings: Record<string, Record<string, string>> = {};
+  for (const format of AUDIO_FORMATS) {
+    presetStrings[format] = {};
+    estimateStrings[format] = {};
+    for (const quality of AUDIO_QUALITIES) {
+      presetStrings[format][quality] = AUDIO_PRESETS[format][quality].args.join(" ");
+      estimateStrings[format][quality] = AUDIO_PRESETS[format][quality].estimate;
+    }
+  }
+
+  return `
+    <div class="quality-section">
+      <label>Output format</label>
+      <div class="btn-row" role="group" aria-label="Output format">
+        ${AUDIO_FORMATS.map((f) => `<button type="button" class="btn btn-sm ${f === settings.format ? "btn-primary" : "btn-ghost"}" data-audio-format="${f}" aria-pressed="${f === settings.format}">${FORMAT_LABELS[f]}</button>`).join("")}
+      </div>
+      <label>Quality</label>
+      <div class="btn-row" role="group" aria-label="Quality">
+        ${AUDIO_QUALITIES.map((q) => `<button type="button" class="btn btn-sm ${q === settings.quality ? "btn-primary" : "btn-ghost"}" data-audio-quality="${q}" aria-pressed="${q === settings.quality}" title="${escapeHtml(AUDIO_PRESETS[settings.format][q].estimate)}">${QUALITY_LABELS[q]}</button>`).join("")}
+      </div>
+      <input type="hidden" name="audio_format" id="audio-format-input" value="${settings.format}">
+      <input type="hidden" name="audio_quality" id="audio-quality-input" value="${settings.quality}">
+
+      <div class="setting-row">
+        <label for="audio-args">ffmpeg audio args</label>
+        <label class="switch" title="Edit the ffmpeg command manually">
+          <input id="audio-custom-toggle" name="audio_custom_enabled" type="checkbox" value="true" ${hasCustom ? "checked" : ""} aria-label="Edit the ffmpeg command manually">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
+      </div>
+      <input id="audio-args" name="audio_args" value="${escapeHtml(argsString)}" ${hasCustom ? "" : "disabled"} placeholder="-c:a libmp3lame -b:a 128k">
+      <div id="audio-presets-data" hidden
+           data-presets="${escapeHtml(JSON.stringify(presetStrings))}"
+           data-estimates="${escapeHtml(JSON.stringify(estimateStrings))}"></div>
+    </div>
+  `;
+}
+
+const ALL_TAGS = [...BOOK_TAGS, ...CHAPTER_TAGS];
+function tagLabel(key: string): string {
+  return ALL_TAGS.find((t) => t.key === key)?.label || key;
+}
+
+/** One chip per segment: a removable tag, or an editable+removable literal
+ * text block. Both are draggable — reordering and moving between rows is
+ * handled client-side (app.js), which rebuilds this exact markup from its
+ * in-memory state after every change. */
+function formatChipHtml(section: "directory" | "filename", rowIndex: number, blockIndex: number, seg: FormatRow[number]): string {
+  const removeBtn = `<button type="button" class="chip-remove" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}" aria-label="Remove">&times;</button>`;
+  if (seg.type === "tag") {
+    return `<span class="format-chip" draggable="true" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}">
+      <span class="format-chip-label">${escapeHtml(tagLabel(seg.value))}</span>${removeBtn}
+    </span>`;
+  }
+  return `<span class="format-chip format-chip-text" draggable="true" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}">
+    <input type="text" class="chip-text-input" value="${escapeHtml(seg.value)}" size="${Math.max(2, seg.value.length)}" data-section="${section}" data-row-index="${rowIndex}" data-block-index="${blockIndex}">${removeBtn}
+  </span>`;
+}
+
+/** One folder level, or the (single) filename row. `rowDraggable` offers a
+ * grip handle to reorder folder levels relative to each other. */
+function formatRowHtml(
+  section: "directory" | "filename",
+  rowIndex: number,
+  row: FormatRow,
+  availableTags: { key: string; label: string }[],
+  removable: boolean,
+  rowDraggable: boolean,
+): string {
+  const chips = row.map((seg, i) => formatChipHtml(section, rowIndex, i, seg)).join("");
+  const options = availableTags.map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join("");
+  const grip = rowDraggable
+    ? `<span class="format-row-grip" draggable="true" data-row-drag="true" data-section="${section}" data-row-index="${rowIndex}" title="Drag to reorder folder levels">&#8942;&#8942;</span>`
+    : "";
+  const removeRow = removable
+    ? `<button type="button" class="btn btn-sm btn-ghost format-remove-row" data-section="${section}" data-row-index="${rowIndex}" title="Remove this folder level">&times;</button>`
+    : "";
+  return `<div class="format-row" data-section="${section}" data-row-index="${rowIndex}">
+    <div class="format-row-main">
+      ${grip}
+      <div class="format-blocks" data-section="${section}" data-row-index="${rowIndex}">${chips}</div>
+    </div>
+    <div class="format-row-controls">
+      <select class="format-add-tag" data-section="${section}" data-row-index="${rowIndex}">
+        <option value="">+ Tag</option>
+        ${options}
+      </select>
+      <button type="button" class="btn btn-sm btn-ghost format-add-text" data-section="${section}" data-row-index="${rowIndex}">+ Text</button>
+      ${removeRow}
+    </div>
+  </div>`;
+}
+
+/**
+ * Tag-based directory/filename templates, arranged and reordered by
+ * dragging (client JS in app.js — this only renders the starting state and
+ * embeds the tag catalog + current template as data for it to pick up).
+ * The preview is entirely client-side against a fixed sample book.
+ */
+function outputFormatSection(format: OutputFormat): string {
+  const directoryRows = format.directory
+    .map((row, i) => formatRowHtml("directory", i, row, BOOK_TAGS, format.directory.length > 1, true))
+    .join("");
+  const filenameRow = formatRowHtml("filename", 0, format.filename, ALL_TAGS, false, false);
+
+  return `
+    <div class="format-section">
+      <label>Folder structure <span class="hint">(each level becomes one folder; empty levels — e.g. no series — are skipped)</span></label>
+      <div id="directory-rows">${directoryRows}</div>
+      <button type="button" id="add-folder-level" class="btn btn-sm btn-ghost">+ Add folder level</button>
+    </div>
+    <div class="format-section">
+      <label>Chapter filename</label>
+      <div id="filename-row">${filenameRow}</div>
+    </div>
+    <div class="format-section">
+      <label>Preview</label>
+      <div id="format-preview" class="format-preview" aria-live="polite"></div>
+    </div>
+    <input type="hidden" name="output_format_json" id="output-format-json" value='${escapeHtml(JSON.stringify(format))}'>
+    <div id="output-format-tags-data" hidden
+         data-book-tags="${escapeHtml(JSON.stringify(BOOK_TAGS))}"
+         data-chapter-tags="${escapeHtml(JSON.stringify(CHAPTER_TAGS))}"></div>
+  `;
+}
+
 export function settingsPage(view: SettingsView): string {
   const { userName, activationBytes, hasPassword, message, error, userNav, desktop, operationRunning } = view;
   const content = `
@@ -212,6 +434,13 @@ export function settingsPage(view: SettingsView): string {
             <input id="set-remove-pw" name="remove_password" type="checkbox" value="true">
             <label for="set-remove-pw">Remove password</label>
           </div>` : ""}
+
+          <h2 style="margin-top:1rem">Conversion quality</h2>
+          ${qualitySection(view.audioSettings)}
+
+          <h2 style="margin-top:1rem">Output naming</h2>
+          ${outputFormatSection(view.outputFormat)}
+
           <button class="btn btn-primary" type="submit">Save</button>
         </form>
       </div>

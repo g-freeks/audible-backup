@@ -265,6 +265,95 @@
     persistColumnPrefsToServer();
   });
 
+  // ---- Settings: drag-and-drop for the output-naming builder ----
+  // Two independent drags: a whole folder level (the grip handle), or a
+  // single chip within/between rows. Both only touch outputFormatState and
+  // then do one full rebuild — never a live DOM move during the drag itself.
+  var dragRowSrc = null;
+  var dragBlockSrc = null;
+
+  document.addEventListener("dragstart", function (e) {
+    var grip = e.target.closest("[data-row-drag]");
+    if (grip) {
+      dragRowSrc = { rowIndex: parseInt(grip.dataset.rowIndex, 10) };
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "format-row");
+      return;
+    }
+    var chip = e.target.closest(".format-chip");
+    if (chip) {
+      dragBlockSrc = {
+        section: chip.dataset.section,
+        rowIndex: parseInt(chip.dataset.rowIndex, 10),
+        blockIndex: parseInt(chip.dataset.blockIndex, 10),
+      };
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "format-chip");
+    }
+  });
+
+  document.addEventListener("dragend", function () {
+    dragRowSrc = null;
+    dragBlockSrc = null;
+    document.querySelectorAll(".format-chip.drag-over").forEach(function (el) {
+      el.classList.remove("drag-over");
+    });
+  });
+
+  document.addEventListener("dragover", function (e) {
+    if (dragRowSrc && e.target.closest("[data-row-drag]")) {
+      e.preventDefault();
+      return;
+    }
+    if (dragBlockSrc && e.target.closest(".format-blocks")) {
+      e.preventDefault();
+      var hoverChip = e.target.closest(".format-chip");
+      document.querySelectorAll(".format-chip.drag-over").forEach(function (el) {
+        if (el !== hoverChip) el.classList.remove("drag-over");
+      });
+      if (hoverChip) hoverChip.classList.add("drag-over");
+    }
+  });
+
+  document.addEventListener("drop", function (e) {
+    if (dragRowSrc) {
+      var targetGrip = e.target.closest("[data-row-drag]");
+      if (targetGrip) {
+        e.preventDefault();
+        var toIndex = parseInt(targetGrip.dataset.rowIndex, 10);
+        var movedRow = outputFormatState.directory.splice(dragRowSrc.rowIndex, 1)[0];
+        outputFormatState.directory.splice(toIndex, 0, movedRow);
+        renderOutputFormatBuilder();
+      }
+      dragRowSrc = null;
+      return;
+    }
+    if (dragBlockSrc) {
+      var targetZone = e.target.closest(".format-blocks");
+      if (targetZone) {
+        e.preventDefault();
+        var targetSection = targetZone.dataset.section;
+        var targetRowIndex = parseInt(targetZone.dataset.rowIndex, 10);
+        var srcRow = outputFormatRow(dragBlockSrc.section, dragBlockSrc.rowIndex);
+        var movedBlock = srcRow.splice(dragBlockSrc.blockIndex, 1)[0];
+        var targetRow = outputFormatRow(targetSection, targetRowIndex);
+
+        var insertAt = targetRow.length;
+        var targetChip = e.target.closest(".format-chip");
+        if (targetChip && targetChip.dataset.section === targetSection &&
+            parseInt(targetChip.dataset.rowIndex, 10) === targetRowIndex) {
+          insertAt = parseInt(targetChip.dataset.blockIndex, 10);
+          var sameRow = dragBlockSrc.section === targetSection && dragBlockSrc.rowIndex === targetRowIndex;
+          if (sameRow && dragBlockSrc.blockIndex < insertAt) insertAt -= 1;
+        }
+        insertAt = Math.max(0, Math.min(insertAt, targetRow.length));
+        targetRow.splice(insertAt, 0, movedBlock);
+        renderOutputFormatBuilder();
+      }
+      dragBlockSrc = null;
+    }
+  });
+
   // ---- Download Selected: only actionable once something is checked ----
   function updateDownloadSelectedState() {
     var btn = document.getElementById("download-selected-btn");
@@ -311,6 +400,203 @@
     applyFilters();
   }
 
+  // ---- Settings: conversion format/quality ----
+  // The preset/format buttons mutate the visible args field directly; the
+  // checkbox only controls whether that field also accepts direct typing.
+  function audioPresetsData() {
+    var el = document.getElementById("audio-presets-data");
+    if (!el) return null;
+    try {
+      return {
+        presets: JSON.parse(el.dataset.presets || "{}"),
+        estimates: JSON.parse(el.dataset.estimates || "{}"),
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function selectAudioButton(groupSelector, value) {
+    document.querySelectorAll(groupSelector).forEach(function (btn) {
+      var active = (btn.dataset.audioFormat || btn.dataset.audioQuality) === value;
+      btn.classList.toggle("btn-primary", active);
+      btn.classList.toggle("btn-ghost", !active);
+      btn.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function updateAudioArgsDisplay() {
+    var data = audioPresetsData();
+    var argsInput = document.getElementById("audio-args");
+    var formatInput = document.getElementById("audio-format-input");
+    var qualityInput = document.getElementById("audio-quality-input");
+    if (!data || !argsInput || !formatInput || !qualityInput) return;
+    var byFormat = data.presets[formatInput.value];
+    argsInput.value = (byFormat && byFormat[qualityInput.value]) || "";
+  }
+
+  function updateQualityTooltips(format) {
+    var data = audioPresetsData();
+    if (!data) return;
+    var byFormat = data.estimates[format];
+    if (!byFormat) return;
+    document.querySelectorAll("[data-audio-quality]").forEach(function (btn) {
+      var estimate = byFormat[btn.dataset.audioQuality];
+      if (estimate) btn.title = estimate;
+    });
+  }
+
+  function setAudioFormat(format) {
+    selectAudioButton("[data-audio-format]", format);
+    var input = document.getElementById("audio-format-input");
+    if (input) input.value = format;
+    updateQualityTooltips(format);
+    updateAudioArgsDisplay();
+  }
+
+  function setAudioQuality(quality) {
+    selectAudioButton("[data-audio-quality]", quality);
+    var input = document.getElementById("audio-quality-input");
+    if (input) input.value = quality;
+    updateAudioArgsDisplay();
+  }
+
+  // ---- Settings: output naming (directory/filename templates) ----
+  // A single in-memory state object is the source of truth; every structural
+  // change (add/remove/reorder) rebuilds the row markup from it, so the DOM
+  // never drifts out of sync with what gets submitted. Typing into a text
+  // block only updates state + the preview, not the DOM, so it keeps focus.
+  var outputFormatState = null;
+  var outputFormatTags = { book: [], chapter: [] };
+
+  var PREVIEW_SAMPLE = {
+    title: "The Final Empire", author: "Brandon Sanderson", series: "Mistborn",
+    seriesEntry: "1", narrator: "Michael Kramer", language: "English",
+    asin: "B002V1O3XG", year: "2006",
+  };
+  var PREVIEW_CHAPTER = { chapterNumber: "01", chapterName: "Prologue" };
+
+  function loadOutputFormatState() {
+    var input = document.getElementById("output-format-json");
+    if (!input) return;
+    try {
+      outputFormatState = JSON.parse(input.value) || { directory: [[]], filename: [] };
+    } catch (e) {
+      outputFormatState = { directory: [[]], filename: [] };
+    }
+    var tagsEl = document.getElementById("output-format-tags-data");
+    if (!tagsEl) return;
+    try {
+      outputFormatTags.book = JSON.parse(tagsEl.dataset.bookTags || "[]");
+      outputFormatTags.chapter = JSON.parse(tagsEl.dataset.chapterTags || "[]");
+    } catch (e) {
+      // leave the empty defaults
+    }
+  }
+
+  function tagLabel(key) {
+    var all = outputFormatTags.book.concat(outputFormatTags.chapter);
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].key === key) return all[i].label;
+    }
+    return key;
+  }
+
+  function escapeHtmlText(s) {
+    var div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function outputFormatRow(section, rowIndex) {
+    return section === "directory" ? outputFormatState.directory[rowIndex] : outputFormatState.filename;
+  }
+
+  function renderChipHtml(section, rowIndex, blockIndex, seg) {
+    var removeBtn = '<button type="button" class="chip-remove" data-section="' + section +
+      '" data-row-index="' + rowIndex + '" data-block-index="' + blockIndex + '" aria-label="Remove">&times;</button>';
+    if (seg.type === "tag") {
+      return '<span class="format-chip" draggable="true" data-section="' + section + '" data-row-index="' + rowIndex +
+        '" data-block-index="' + blockIndex + '"><span class="format-chip-label">' + escapeHtmlText(tagLabel(seg.value)) +
+        '</span>' + removeBtn + '</span>';
+    }
+    return '<span class="format-chip format-chip-text" draggable="true" data-section="' + section + '" data-row-index="' +
+      rowIndex + '" data-block-index="' + blockIndex + '"><input type="text" class="chip-text-input" value="' +
+      escapeHtmlText(seg.value) + '" size="' + Math.max(2, seg.value.length) + '" data-section="' + section +
+      '" data-row-index="' + rowIndex + '" data-block-index="' + blockIndex + '">' + removeBtn + '</span>';
+  }
+
+  function rowAvailableTags(section) {
+    return section === "filename" ? outputFormatTags.book.concat(outputFormatTags.chapter) : outputFormatTags.book;
+  }
+
+  function renderFormatRowHtml(section, rowIndex, row, removable, rowDraggable) {
+    var chips = row.map(function (seg, i) { return renderChipHtml(section, rowIndex, i, seg); }).join("");
+    var options = '<option value="">+ Tag</option>' + rowAvailableTags(section).map(function (t) {
+      return '<option value="' + t.key + '">' + escapeHtmlText(t.label) + '</option>';
+    }).join("");
+    var grip = rowDraggable
+      ? '<span class="format-row-grip" draggable="true" data-row-drag="true" data-section="' + section +
+        '" data-row-index="' + rowIndex + '" title="Drag to reorder folder levels">&#8942;&#8942;</span>'
+      : "";
+    var removeRow = removable
+      ? '<button type="button" class="btn btn-sm btn-ghost format-remove-row" data-section="' + section +
+        '" data-row-index="' + rowIndex + '" title="Remove this folder level">&times;</button>'
+      : "";
+    return '<div class="format-row" data-section="' + section + '" data-row-index="' + rowIndex + '">' +
+      '<div class="format-row-main">' + grip +
+      '<div class="format-blocks" data-section="' + section + '" data-row-index="' + rowIndex + '">' + chips + '</div></div>' +
+      '<div class="format-row-controls"><select class="format-add-tag" data-section="' + section + '" data-row-index="' +
+      rowIndex + '">' + options + '</select><button type="button" class="btn btn-sm btn-ghost format-add-text" data-section="' +
+      section + '" data-row-index="' + rowIndex + '">+ Text</button>' + removeRow + '</div></div>';
+  }
+
+  function renderRowValue(row, values) {
+    return row.map(function (seg) {
+      return seg.type === "tag" ? (values[seg.value] || "") : seg.value;
+    }).join("");
+  }
+
+  function sanitizePreviewName(name) {
+    return name.replace(/[<>:"/\\|?*]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function renderFormatPreview() {
+    var el = document.getElementById("format-preview");
+    if (!el || !outputFormatState) return;
+    var segments = outputFormatState.directory
+      .map(function (row) { return sanitizePreviewName(renderRowValue(row, PREVIEW_SAMPLE)); })
+      .filter(function (s) { return s.length > 0; });
+    if (segments.length === 0) {
+      segments = [sanitizePreviewName(PREVIEW_SAMPLE.title) || ("Book_" + PREVIEW_SAMPLE.asin)];
+    }
+    var chapterValues = {};
+    for (var key in PREVIEW_SAMPLE) chapterValues[key] = PREVIEW_SAMPLE[key];
+    chapterValues.chapterNumber = PREVIEW_CHAPTER.chapterNumber;
+    chapterValues.chapterName = PREVIEW_CHAPTER.chapterName;
+    var filenameRaw = renderRowValue(outputFormatState.filename, chapterValues).trim();
+    var filename = sanitizePreviewName(filenameRaw) ||
+      (PREVIEW_CHAPTER.chapterNumber + " - " + PREVIEW_CHAPTER.chapterName);
+    el.textContent = segments.join(" / ") + " / " + filename + ".mp3";
+  }
+
+  function saveOutputFormatState() {
+    var input = document.getElementById("output-format-json");
+    if (input) input.value = JSON.stringify(outputFormatState);
+  }
+
+  function renderOutputFormatBuilder() {
+    var dirContainer = document.getElementById("directory-rows");
+    var fileContainer = document.getElementById("filename-row");
+    if (!dirContainer || !fileContainer || !outputFormatState) return;
+    dirContainer.innerHTML = outputFormatState.directory.map(function (row, i) {
+      return renderFormatRowHtml("directory", i, row, outputFormatState.directory.length > 1, true);
+    }).join("");
+    fileContainer.innerHTML = renderFormatRowHtml("filename", 0, outputFormatState.filename, false, false);
+    saveOutputFormatState();
+    renderFormatPreview();
+  }
+
   // ---- Delegated events ----
   // Capture phase: a button turned into "Cancel" still carries its original
   // hx-post, so stop the event before htmx's own listener sees it.
@@ -353,6 +639,45 @@
       }
       return;
     }
+
+    var formatBtn = e.target.closest("[data-audio-format]");
+    if (formatBtn) {
+      setAudioFormat(formatBtn.dataset.audioFormat);
+      return;
+    }
+    var qualityBtn = e.target.closest("[data-audio-quality]");
+    if (qualityBtn) {
+      setAudioQuality(qualityBtn.dataset.audioQuality);
+      return;
+    }
+
+    var addFolderLevel = e.target.closest("#add-folder-level");
+    if (addFolderLevel) {
+      outputFormatState.directory.push([]);
+      renderOutputFormatBuilder();
+      return;
+    }
+    var addTextBtn = e.target.closest(".format-add-text");
+    if (addTextBtn) {
+      outputFormatRow(addTextBtn.dataset.section, parseInt(addTextBtn.dataset.rowIndex, 10))
+        .push({ type: "text", value: " - " });
+      renderOutputFormatBuilder();
+      return;
+    }
+    var removeChipBtn = e.target.closest(".chip-remove");
+    if (removeChipBtn) {
+      outputFormatRow(removeChipBtn.dataset.section, parseInt(removeChipBtn.dataset.rowIndex, 10))
+        .splice(parseInt(removeChipBtn.dataset.blockIndex, 10), 1);
+      renderOutputFormatBuilder();
+      return;
+    }
+    var removeRowBtn = e.target.closest(".format-remove-row");
+    if (removeRowBtn) {
+      outputFormatState.directory.splice(parseInt(removeRowBtn.dataset.rowIndex, 10), 1);
+      renderOutputFormatBuilder();
+      return;
+    }
+
     closeDropdowns(e.target);
 
     var actionBtn = e.target.closest("[data-action-url]");
@@ -403,7 +728,19 @@
   window.addEventListener("resize", function () { closeDropdowns(); });
 
   document.addEventListener("input", function (e) {
-    if (e.target.id === "search-input") applyFilters();
+    if (e.target.id === "search-input") {
+      applyFilters();
+      return;
+    }
+    // Typing into a text block updates state + the preview only — never
+    // rebuilds the DOM, or the input would lose focus on every keystroke.
+    if (e.target.classList.contains("chip-text-input")) {
+      var row = outputFormatRow(e.target.dataset.section, parseInt(e.target.dataset.rowIndex, 10));
+      var seg = row && row[parseInt(e.target.dataset.blockIndex, 10)];
+      if (seg) seg.value = e.target.value;
+      saveOutputFormatState();
+      renderFormatPreview();
+    }
   });
 
   document.addEventListener("change", function (e) {
@@ -423,6 +760,22 @@
     }
     if (e.target.dataset.colToggle) {
       toggleColumn(e.target.dataset.colToggle, e.target.checked);
+      return;
+    }
+    if (e.target.id === "audio-custom-toggle") {
+      var argsInput = document.getElementById("audio-args");
+      if (argsInput) {
+        argsInput.disabled = !e.target.checked;
+        if (e.target.checked) argsInput.focus();
+      }
+      return;
+    }
+    if (e.target.classList.contains("format-add-tag")) {
+      var tagKey = e.target.value;
+      if (!tagKey) return;
+      outputFormatRow(e.target.dataset.section, parseInt(e.target.dataset.rowIndex, 10))
+        .push({ type: "tag", value: tagKey });
+      renderOutputFormatBuilder();
     }
   });
 
@@ -570,4 +923,8 @@
   applyColumnPrefs();
   applyColumnOrder();
   updateDownloadSelectedState();
+  // The server already rendered the output-naming builder's starting rows —
+  // just parse its state and paint the (JS-only) live preview from it.
+  loadOutputFormatState();
+  renderFormatPreview();
 })();

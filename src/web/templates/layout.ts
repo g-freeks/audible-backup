@@ -101,6 +101,13 @@ export function layout(
        overridden under prefers-color-scheme so the page follows the system
        the same way a native GNOME app would. */
     :root {
+      /* Without this, some engines (WebKitGTK in particular — the desktop
+         shell's own renderer) keep drawing native form-control chrome
+         (select boxes, checkboxes) in light mode even once our own colors
+         below go dark, since nothing told them a dark variant exists: the
+         author-set text color on a select was honored, but its native-drawn
+         background stayed light, producing unreadable white-on-white text. */
+      color-scheme: light dark;
       --bg: #fafafb;
       --surface: #ffffff;
       --surface2: #f3f3f4;
@@ -116,6 +123,7 @@ export function layout(
     }
     @media (prefers-color-scheme: dark) {
       :root {
+        color-scheme: dark;
         --bg: #222226;
         --surface: #303030;
         --surface2: #383838;
