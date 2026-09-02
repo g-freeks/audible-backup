@@ -771,6 +771,25 @@ describe("user navigation", () => {
   });
 });
 
+describe("activation bytes tooltip", () => {
+  it("explains the field on the add-user form", async () => {
+    const html = await (await app.request("/login")).text();
+    assert.match(html, /id="add-bytes"[^>]*title="[^"]*legacy \.aax[^"]*"/);
+  });
+
+  it("explains the field on the settings page", async () => {
+    const add = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "eve" }),
+      redirect: "manual",
+    });
+    const cookie = (add.headers.get("set-cookie") || "").split(";")[0];
+
+    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
+    assert.match(html, /id="set-bytes"[^>]*title="[^"]*legacy \.aax[^"]*"/);
+  });
+});
+
 // --- htmx attribute inheritance regression ---
 
 describe("action buttons are not affected by inherited hx-select", () => {
