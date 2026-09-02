@@ -374,17 +374,15 @@ export function SettingsPage() {
                   </div>
                   <div className="setting-row">
                     <label htmlFor="audio-args">ffmpeg audio args</label>
-                    <label className="switch" title="Edit the ffmpeg command manually">
-                      <Switch.Root
-                        checked={customEnabled}
-                        onCheckedChange={setCustomEnabled}
-                        aria-label="Edit the ffmpeg command manually"
-                      >
-                        <span className="switch-track">
-                          <span className="switch-thumb" />
-                        </span>
-                      </Switch.Root>
-                    </label>
+                    <Switch.Root
+                      className="switch-root"
+                      checked={customEnabled}
+                      onCheckedChange={setCustomEnabled}
+                      aria-label="Edit the ffmpeg command manually"
+                      title="Edit the ffmpeg command manually"
+                    >
+                      <Switch.Thumb className="switch-thumb" />
+                    </Switch.Root>
                   </div>
                   <input
                     id="audio-args"

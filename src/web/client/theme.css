@@ -311,8 +311,13 @@
        would clip a menu opened on one of the last rows. Coordinates are set by
        app.js when the menu opens. */
     .dropdown-menu {
+      /* No position here: Menu.Positioner (its parent) already handles
+         positioning via floating-ui's own absolute + transform — a
+         position:fixed popup would be hijacked by the Positioner's
+         transform (a transformed ancestor becomes the containing block for
+         a position:fixed descendant), which breaks flip/shift collision
+         math into computing against the wrong box. */
       display: none;
-      position: fixed;
       z-index: 200;
       min-width: 140px;
       background: var(--surface);
@@ -449,22 +454,26 @@
     /* Sliding toggle: a real checkbox, visually hidden, driving a track+thumb
        sibling via :checked — stays a native, keyboard- and screen-reader-
        accessible control, just repainted. */
-    .switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
-    .switch input {
-      position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; padding: 0;
+    /* Switch.Root (Base UI) renders as a single <span role="switch"> with no
+       separate "track" element of its own — the root's box IS the track,
+       styled directly, with Switch.Thumb as the moving dot. State comes via
+       Base UI's [data-checked]/[data-unchecked] attributes rather than a
+       real checkbox's :checked (Switch.Root does render a visually-hidden
+       native input internally, for forms, but it isn't a CSS sibling of
+       anything here). */
+    .switch-root {
+      position: relative; display: inline-flex; align-items: center; flex-shrink: 0;
+      width: 2.25rem; height: 1.25rem; border: none; padding: 0; cursor: pointer;
+      background: var(--border); border-radius: 999px; transition: background 0.15s;
     }
-    .switch-track {
-      width: 2.25rem; height: 1.25rem; background: var(--border); border-radius: 999px;
-      position: relative; transition: background 0.15s;
-    }
+    .switch-root[data-checked] { background: var(--accent); }
+    .switch-root:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .switch-thumb {
       position: absolute; top: 2px; left: 2px; width: 1.05rem; height: 1.05rem;
       background: #fff; border-radius: 50%; transition: transform 0.15s;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     }
-    .switch input:checked + .switch-track { background: var(--accent); }
-    .switch input:checked + .switch-track .switch-thumb { transform: translateX(1rem); }
-    .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .switch-root[data-checked] .switch-thumb { transform: translateX(1rem); }
     .format-section { margin-top: 0.6rem; }
     .format-section label { display: block; margin-bottom: 0.3rem; }
     #directory-rows, #filename-row { display: flex; flex-direction: column; gap: 0.4rem; }

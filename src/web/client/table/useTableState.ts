@@ -24,7 +24,7 @@ const DEFAULT_STATE: PersistedTableState = {
   columnFilters: [],
   globalFilter: "",
   columnVisibility: {},
-  columnOrder: ["title", ...HIDEABLE_COLUMN_IDS],
+  columnOrder: ["select", "title", ...HIDEABLE_COLUMN_IDS, "actions"],
   columnSizing: {},
 };
 
@@ -36,11 +36,13 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * today: drops stale keys, appends anything new since the save (same logic
  * as getColumnOrder() in the old app.js). */
 function reconcileOrder(saved: unknown): ColumnOrderState {
-  const known = ["title", ...HIDEABLE_COLUMN_IDS];
+  // "select" and "actions" are pinned first/last regardless of what was
+  // saved — only the reorderable data columns in between come from state.
+  const reorderable = ["title", ...HIDEABLE_COLUMN_IDS];
   const savedArr = Array.isArray(saved) ? saved.filter((k): k is string => typeof k === "string") : [];
-  const kept = savedArr.filter((id) => known.includes(id));
-  const missing = known.filter((id) => !kept.includes(id));
-  return [...kept, ...missing];
+  const kept = savedArr.filter((id) => reorderable.includes(id));
+  const missing = reorderable.filter((id) => !kept.includes(id));
+  return ["select", ...kept, ...missing, "actions"];
 }
 
 /**

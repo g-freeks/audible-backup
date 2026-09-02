@@ -9,9 +9,10 @@ import * as path from "node:path";
  * directory, plus a browser page (Chromium by default, WebKit with
  * BROWSER=webkit — the desktop shell embeds WebKitGTK, so this is what
  * catches engine differences without needing a Linux desktop to run on).
- * These tests exist to cover behavior that only appears in a browser — htmx
- * swaps, CSP enforcement, delegated event handlers — which the HTML-level
- * route tests cannot see.
+ * These tests exist to cover behavior that only appears in a browser — the
+ * React client actually mounting and running, drag-and-drop, SSE-driven UI
+ * updates, CSP enforcement — which the route-level JSON API tests cannot
+ * see.
  */
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");

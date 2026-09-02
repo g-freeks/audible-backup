@@ -1,6 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
 import type { Book } from "../types.ts";
 import { useConfirm } from "../components/ConfirmDialog.tsx";
+import { useOperationContext } from "../OperationContext.tsx";
 
 export interface BookActions {
   prepare: (asin: string) => void;
@@ -16,6 +17,7 @@ export interface BookActions {
  * depends only on the book's status. */
 export function RowActions({ book, actions }: { book: Book; actions: BookActions }) {
   const confirm = useConfirm();
+  const { running } = useOperationContext();
   const { asin, status } = book;
 
   const deleteWithConfirm = async () => {
@@ -78,7 +80,12 @@ export function RowActions({ book, actions }: { book: Book; actions: BookActions
       {primaryLabel}
     </a>
   ) : (
-    <button type="button" className="btn btn-sm btn-primary split-main" onClick={primaryOnClick ?? undefined}>
+    <button
+      type="button"
+      className="btn btn-sm btn-primary split-main"
+      disabled={running}
+      onClick={primaryOnClick ?? undefined}
+    >
       {primaryLabel}
     </button>
   );
@@ -89,7 +96,7 @@ export function RowActions({ book, actions }: { book: Book; actions: BookActions
     <div className="split-btn">
       {primary}
       <Menu.Root>
-        <Menu.Trigger className="btn btn-sm btn-primary split-caret" aria-label="More actions">
+        <Menu.Trigger className="btn btn-sm btn-primary split-caret" aria-label="More actions" disabled={running}>
           &#9662;
         </Menu.Trigger>
         <Menu.Portal>

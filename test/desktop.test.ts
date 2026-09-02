@@ -6,7 +6,7 @@ import * as os from "os";
 import { Hono } from "hono";
 import { routes } from "../src/web/routes.ts";
 import { closeDb, markDownloaded } from "../src/db.ts";
-import { clearOperation } from "../src/operations.ts";
+import { resetOperationForTest } from "../src/operations.ts";
 import { isDesktopMode, desktopPaths } from "../src/config.ts";
 import {
   userDirs,
@@ -41,7 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  clearOperation();
+  resetOperationForTest();
   closeDb();
   delete process.env.AUDIBLE_DESKTOP;
   delete process.env.AUDIBLE_DESKTOP_TOKEN;

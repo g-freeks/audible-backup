@@ -15,7 +15,7 @@ import {
   deleteBook,
   getAudiobookByAsin,
 } from "../src/db.ts";
-import { clearOperation, startOperation, wasCancelled } from "../src/operations.ts";
+import { startOperation, wasCancelled, resetOperationForTest } from "../src/operations.ts";
 
 /** Creates the on-disk output directory + a chapter mp3 that makes a book "converted". */
 function markBookConverted(title: string): void {
@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  clearOperation();
+  resetOperationForTest();
   closeDb();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -156,13 +156,21 @@ function sessionCookie(res: Response): string {
   return setCookie.split(";")[0];
 }
 
-async function addUserAndLogin(app: Hono, name: string): Promise<string> {
-  const res = await app.request("/user/add", {
+async function addUserAndLogin(app: Hono, name: string, activationBytes?: string): Promise<string> {
+  const res = await app.request("/api/users", {
     method: "POST",
-    body: new URLSearchParams({ name }),
-    redirect: "manual",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, activationBytes }),
   });
   return sessionCookie(res);
+}
+
+async function addUserJson(app: Hono, name: string, password?: string): Promise<Response> {
+  return app.request("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, password }),
+  });
 }
 
 describe("GET /api/session", () => {
@@ -174,7 +182,7 @@ describe("GET /api/session", () => {
 
   it("reports the signed-in user and the others available to switch to", async () => {
     const alice = await addUserAndLogin(app, "alice");
-    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "bob" }) });
+    await addUserJson(app, "bob");
 
     const res = await app.request("/api/session", { headers: { cookie: alice } });
     const data = await res.json();
@@ -186,7 +194,7 @@ describe("GET /api/session", () => {
 
 describe("GET /api/session without a session cookie", () => {
   it("still answers 200 (anonymous) once users exist, rather than 401", async () => {
-    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
+    await addUserJson(app, "alice");
     const res = await app.request("/api/session");
     assert.equal(res.status, 200);
     const data = await res.json();
@@ -197,7 +205,7 @@ describe("GET /api/session without a session cookie", () => {
 
 describe("POST /api/session (JSON login)", () => {
   it("logs in a passwordless user and returns session state", async () => {
-    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
+    await addUserJson(app, "alice");
 
     const res = await app.request("/api/session", {
       method: "POST",
@@ -220,10 +228,7 @@ describe("POST /api/session (JSON login)", () => {
   });
 
   it("rejects a wrong password", async () => {
-    await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "alice", password: "secret" }),
-    });
+    await addUserJson(app, "alice", "secret");
     const res = await app.request("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -272,19 +277,14 @@ describe("POST /api/users (JSON add)", () => {
 
 describe("GET /api/settings", () => {
   it("requires a session (401, not a redirect a fetch would silently follow)", async () => {
-    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
+    await addUserJson(app, "alice");
     const res = await app.request("/api/settings");
     assert.equal(res.status, 401);
     assert.deepEqual(await res.json(), { error: "Unauthorized" });
   });
 
   it("returns the settings state for the signed-in user", async () => {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "alice", activation_bytes: "deadbeef" }),
-      redirect: "manual",
-    });
-    const cookie = sessionCookie(res);
+    const cookie = await addUserAndLogin(app, "alice", "deadbeef");
 
     const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
     assert.equal(settings.userName, "alice");
@@ -404,13 +404,39 @@ describe("operation-start JSON endpoints", () => {
     assert.equal(bad.status, 400);
   });
 
-  it("POST /api/download-all defaults to every not-yet-downloaded book", async () => {
-    upsertBook("B000000001", { author: "A1", title: "T1" });
+  it("POST /api/download-all queues not-downloaded books for fetch and already-fetched ones for conversion", async () => {
+    upsertBook("B0ALL00001", { author: "A1", title: "Not downloaded" });
+
+    const targetDir = process.env.AUDIBLE_TARGET_DIR!;
+    fs.writeFileSync(path.join(targetDir, "B0ALL00002_Ready.aax"), "");
+    fs.writeFileSync(path.join(targetDir, "B0ALL00002-chapters.json"), "{}");
+    fs.writeFileSync(path.join(targetDir, "B0ALL00002_Ready.jpg"), "");
+    markDownloaded("B0ALL00002", "A2", "Ready", path.join(targetDir, "B0ALL00002_Ready.aax"));
+
     const res = await app.request("/api/download-all", { method: "POST" });
     assert.equal(res.status, 200);
     const data = await res.json();
     assert.equal(data.type, "download-all");
-    assert.ok(data.queued.includes("B000000001"));
+    assert.ok(data.queued.includes("B0ALL00001"), "not-downloaded book queued for fetch");
+    assert.ok(data.queued.includes("B0ALL00002"), "already-downloaded book queued for conversion");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("POST /api/download-all scopes to the given ASINs — what Download Selected posts", async () => {
+    // Selected: not-downloaded (queued for fetch).
+    upsertBook("B0SEL00001", { author: "A1", title: "Selected, not downloaded" });
+    // Not selected: also not-downloaded, must NOT be queued.
+    upsertBook("B0SEL00002", { author: "A2", title: "Not selected" });
+
+    const res = await app.request("/api/download-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asins: ["B0SEL00001"] }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.queued.includes("B0SEL00001"), "selected book is queued");
+    assert.ok(!data.queued.includes("B0SEL00002"), "unselected book is left alone");
     await new Promise((resolve) => setTimeout(resolve, 500));
   });
 
@@ -567,99 +593,6 @@ describe("POST /api/delete/:asin", () => {
 
 // --- Download ---
 
-describe("POST /library/download", () => {
-  it("returns 409 when an operation is already running", async () => {
-    upsertBook("B000000001", { author: "A1", title: "T1" });
-    // Hold an operation open explicitly. Racing two requests would depend on
-    // the first one being slow, which it no longer is.
-    startOperation("sync");
-
-    const res2 = await app.request("/library/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "asin=B000000001",
-    });
-    assert.equal(res2.status, 409);
-
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  });
-
-  it("returns SSE panel HTML with download stream and OOB queued status", async () => {
-    upsertBook("B000000001", { author: "A1", title: "T1" });
-    const res = await app.request("/library/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "asin=B000000001",
-    });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.ok(html.includes("sse-connect"));
-    assert.ok(html.includes("/library/download/stream"));
-    assert.ok(html.includes("Download started..."));
-    assert.ok(html.includes('id="status-B000000001"'));
-    assert.ok(html.includes("Queued"));
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  });
-});
-
-// --- Download All / Download Selected (both fully process: fetch + convert) ---
-
-describe("POST /library/download-all", () => {
-  it("returns 409 when an operation is already running", async () => {
-    startOperation("sync");
-    const res = await app.request("/library/download-all", { method: "POST" });
-    assert.equal(res.status, 409);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  });
-
-  it("queues not-downloaded books for fetch and already-fetched ones for conversion", async () => {
-    upsertBook("B0ALL00001", { author: "A1", title: "Not downloaded" });
-
-    const targetDir = process.env.AUDIBLE_TARGET_DIR!;
-    fs.writeFileSync(path.join(targetDir, "B0ALL00002_Ready.aax"), "");
-    fs.writeFileSync(path.join(targetDir, "B0ALL00002-chapters.json"), "{}");
-    fs.writeFileSync(path.join(targetDir, "B0ALL00002_Ready.jpg"), "");
-    markDownloaded("B0ALL00002", "A2", "Ready", path.join(targetDir, "B0ALL00002_Ready.aax"));
-
-    const res = await app.request("/library/download-all", { method: "POST" });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.ok(html.includes("sse-connect"));
-    assert.ok(html.includes("/library/download-all/stream"));
-    assert.ok(html.includes("Download started..."));
-    assert.ok(html.includes('id="status-B0ALL00001"'), "not-downloaded book queued for fetch");
-    assert.ok(html.includes('id="status-B0ALL00002"'), "already-downloaded book queued for conversion");
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  });
-
-  it("scopes to the given ASINs — this is what Download Selected posts to", async () => {
-    // Selected: not-downloaded (queued for fetch).
-    upsertBook("B0SEL00001", { author: "A1", title: "Selected, not downloaded" });
-    // Not selected: also not-downloaded, must NOT be queued.
-    upsertBook("B0SEL00002", { author: "A2", title: "Not selected" });
-
-    const res = await app.request("/library/download-all", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "asin=B0SEL00001",
-    });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.ok(html.includes('id="status-B0SEL00001"'), "selected book is queued");
-    assert.ok(!html.includes('id="status-B0SEL00002"'), "unselected book is left alone");
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  });
-
-  it("rejects an invalid ASIN in the selection", async () => {
-    const res = await app.request("/library/download-all", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "asin=not-an-asin",
-    });
-    assert.equal(res.status, 400);
-  });
-});
-
 // --- deleteBook DB function ---
 
 describe("deleteBook", () => {
@@ -717,18 +650,18 @@ describe("ASIN validation", () => {
       "/api/ignore/not-an-asin",
       "/api/unignore/lowercase1",
       "/api/delete/..%2F..%2Fetc",
-      "/convert/short",
+      "/api/convert/short",
     ]) {
       const res = await app.request(url, { method: "POST" });
       assert.equal(res.status, 400, `expected 400 for ${url}`);
     }
   });
 
-  it("rejects invalid ASINs in download form body", async () => {
-    const body = new URLSearchParams({ asin: "../../etc/passwd" });
-    const res = await app.request("/library/download", {
+  it("rejects invalid ASINs in the download request body", async () => {
+    const res = await app.request("/api/download", {
       method: "POST",
-      body,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asins: ["../../etc/passwd"] }),
     });
     assert.equal(res.status, 400);
   });
@@ -797,24 +730,27 @@ describe("multi-tenant mode", () => {
     return setCookie.split(";")[0];
   }
 
+  async function addUser(name: string, password?: string): Promise<Response> {
+    return app.request("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, password }),
+    });
+  }
+
   it("runs in legacy mode when no users exist", async () => {
     const res = await app.request("/api/status");
     assert.equal(res.status, 200);
   });
 
   it("requires login once a user exists, and add-user signs in", async () => {
-    const addRes = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "alice" }),
-      redirect: "manual",
-    });
-    assert.equal(addRes.status, 302);
+    const addRes = await addUser("alice");
+    assert.equal(addRes.status, 201);
     const cookie = cookieFrom(addRes);
     assert.match(cookie, /^session=/);
 
-    const noAuth = await app.request("/", { redirect: "manual" });
-    assert.equal(noAuth.status, 302);
-    assert.equal(noAuth.headers.get("location"), "/login");
+    const noAuth = await app.request("/api/books");
+    assert.equal(noAuth.status, 401);
 
     const withAuth = await app.request("/", { headers: { cookie } });
     assert.equal(withAuth.status, 200);
@@ -824,41 +760,27 @@ describe("multi-tenant mode", () => {
   });
 
   it("rejects wrong passwords and accepts correct ones", async () => {
-    await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "bob", password: "secret" }),
-      redirect: "manual",
-    });
+    await addUser("bob", "secret");
 
-    const wrong = await app.request("/user/switch", {
+    const wrong = await app.request("/api/session", {
       method: "POST",
-      body: new URLSearchParams({ name: "bob", password: "nope" }),
-      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "bob", password: "nope" }),
     });
     assert.equal(wrong.status, 401);
 
-    const right = await app.request("/user/switch", {
+    const right = await app.request("/api/session", {
       method: "POST",
-      body: new URLSearchParams({ name: "bob", password: "secret" }),
-      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "bob", password: "secret" }),
     });
-    assert.equal(right.status, 302);
+    assert.equal(right.status, 200);
     assert.match(cookieFrom(right), /^session=/);
   });
 
   it("isolates library data between users", async () => {
-    const aliceRes = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "alice" }),
-      redirect: "manual",
-    });
-    const bobRes = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "bob" }),
-      redirect: "manual",
-    });
-    const aliceCookie = cookieFrom(aliceRes);
-    const bobCookie = cookieFrom(bobRes);
+    const aliceCookie = cookieFrom(await addUser("alice"));
+    const bobCookie = cookieFrom(await addUser("bob"));
 
     const { runWithUser } = await import("../src/users.ts");
     runWithUser("alice", () => {
@@ -872,17 +794,12 @@ describe("multi-tenant mode", () => {
   });
 
   it("updates settings for the current user", async () => {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "carol" }),
-      redirect: "manual",
-    });
-    const cookie = cookieFrom(res);
+    const cookie = cookieFrom(await addUser("carol"));
 
-    const save = await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ activation_bytes: "cafebabe" }),
+    const save = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ activationBytes: "cafebabe" }),
     });
     assert.equal(save.status, 200);
 
@@ -891,17 +808,11 @@ describe("multi-tenant mode", () => {
   });
 
   it("logout destroys the session", async () => {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "dave" }),
-      redirect: "manual",
-    });
-    const cookie = cookieFrom(res);
+    const cookie = cookieFrom(await addUser("dave"));
 
-    await app.request("/user/logout", { method: "POST", headers: { cookie }, redirect: "manual" });
-    const after = await app.request("/", { headers: { cookie }, redirect: "manual" });
-    assert.equal(after.status, 302);
-    assert.equal(after.headers.get("location"), "/login");
+    await app.request("/api/session", { method: "DELETE", headers: { cookie } });
+    const after = await app.request("/api/books", { headers: { cookie } });
+    assert.equal(after.status, 401);
   });
 });
 
@@ -958,190 +869,12 @@ describe("dark-mode form controls", () => {
 // "GET /api/session" and "GET /api/session without a session cookie" above.
 // Rendering itself belongs to test/ui/*.test.ts.
 
-describe("audio quality settings", () => {
-  async function signedIn(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
-    });
-    return (res.headers.get("set-cookie") || "").split(";")[0];
-  }
-
-  // Defaults and rendered button states are client-rendered now
-  // (Settings.tsx) — see "GET /api/settings" for the default-state coverage.
-
-  it("saves a preset choice (format + quality, no custom override)", async () => {
-    const cookie = await signedIn("grace");
-    const res = await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ audio_format: "flac", audio_quality: "high" }),
-    });
-    assert.equal(res.status, 200);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("grace")?.audioSettings, { format: "flac", quality: "high" });
-  });
-
-  it("saves a custom ffmpeg args override when the manual toggle is checked", async () => {
-    const cookie = await signedIn("heidi");
-    const res = await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({
-        audio_format: "mp3",
-        audio_quality: "low",
-        audio_custom_enabled: "true",
-        audio_args: "-c:a libmp3lame -q:a 0",
-      }),
-    });
-    assert.equal(res.status, 200);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("heidi")?.audioSettings, {
-      format: "mp3",
-      quality: "low",
-      customArgs: "-c:a libmp3lame -q:a 0",
-    });
-
-  });
-
-  it("ignores audio_args when the manual toggle isn't checked", async () => {
-    const cookie = await signedIn("ivan");
-    await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({
-        audio_format: "aac",
-        audio_quality: "medium",
-        audio_args: "-c:a something-typed-but-not-enabled",
-      }),
-    });
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("ivan")?.audioSettings, { format: "aac", quality: "medium" });
-  });
-
-  it("ignores an invalid format/quality instead of saving garbage", async () => {
-    const cookie = await signedIn("judy");
-    const res = await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ audio_format: "wav", audio_quality: "ultra" }),
-    });
-    assert.equal(res.status, 200);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.equal(getUser("judy")?.audioSettings, undefined);
-  });
-});
-
-describe("output naming settings", () => {
-  async function signedIn(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
-    });
-    return (res.headers.get("set-cookie") || "").split(";")[0];
-  }
-
-  // Default template, tag catalog, and preview rendering are client-owned
-  // now (OutputFormatBuilder.tsx) — see "GET /api/settings" for default
-  // outputFormat coverage.
-
-  it("saves a valid custom template", async () => {
-    const cookie = await signedIn("leo");
-    const template = {
-      directory: [
-        [{ type: "tag", value: "author" }],
-        [{ type: "tag", value: "series" }],
-      ],
-      filename: [
-        { type: "tag", value: "chapterNumber" },
-        { type: "text", value: ". " },
-        { type: "tag", value: "chapterName" },
-      ],
-    };
-    const res = await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ output_format_json: JSON.stringify(template) }),
-    });
-    assert.equal(res.status, 200);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("leo")?.outputFormat, template);
-  });
-
-  it("ignores malformed JSON instead of crashing or saving garbage", async () => {
-    const cookie = await signedIn("mallory");
-    const res = await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ output_format_json: "{not valid json" }),
-    });
-    assert.equal(res.status, 200);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.equal(getUser("mallory")?.outputFormat, undefined);
-  });
-
-  it("drops unknown tag keys and rejects chapter-only tags outside the filename row", async () => {
-    const cookie = await signedIn("nate");
-    const template = {
-      directory: [
-        [
-          { type: "tag", value: "author" },
-          { type: "tag", value: "totallyMadeUp" },
-          { type: "tag", value: "chapterNumber" },
-        ],
-      ],
-      filename: [{ type: "tag", value: "chapterNumber" }],
-    };
-    await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ output_format_json: JSON.stringify(template) }),
-    });
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("nate")?.outputFormat?.directory, [[{ type: "tag", value: "author" }]]);
-  });
-
-  it("a saved multi-level template actually changes where a converted book is found", async () => {
-    const cookie = await signedIn("olivia");
-    const template = {
-      directory: [[{ type: "tag", value: "author" }], [{ type: "tag", value: "title" }]],
-      filename: [{ type: "tag", value: "chapterName" }],
-    };
-    await app.request("/user/settings", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ output_format_json: JSON.stringify(template) }),
-    });
-
-    const { runWithUser, userDirs } = await import("../src/users.ts");
-    runWithUser("olivia", () => {
-      upsertBook("B0OUTFMT001", { author: "Iain M. Banks", title: "Consider Phlebas" });
-      markDownloaded("B0OUTFMT001", "Iain M. Banks", "Consider Phlebas", "/x/B0OUTFMT001.aaxc");
-    });
-    const nested = path.join(userDirs("olivia").outputDir, "Iain M. Banks", "Consider Phlebas");
-    fs.mkdirSync(nested, { recursive: true });
-    fs.writeFileSync(path.join(nested, "Prologue.mp3"), "");
-
-    const status = await (await app.request("/api/status", { headers: { cookie } })).json();
-    assert.equal(status.converted, 1, "found under the nested author/title path the template describes");
-  });
-});
-
 describe("PATCH /api/settings", () => {
   async function signedIn(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
+    const res = await app.request("/api/users", {
       method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
     });
     const setCookie = res.headers.get("set-cookie") || "";
     return setCookie.split(";")[0];
@@ -1205,159 +938,93 @@ describe("PATCH /api/settings", () => {
     const { getUser } = await import("../src/users.ts");
     assert.equal(getUser("mallory")?.audioSettings, undefined);
   });
-});
 
-// --- htmx attribute inheritance regression ---
-
-// hx-select/hx-trigger inheritance no longer applies — there is no htmx in
-// the client any more (see the JSON SSE stream tests under "GET
-// /api/operation/stream" instead). The old /library/sync HTML-fragment
-// route stays functional (unreachable from the UI, kept only for the
-// server-rendered path that will be deleted along with the templates), so
-// its own regression check stays here for now.
-describe("POST /library/sync (legacy HTML fragment route)", () => {
-  it("returns a log panel that references the SSE stream", async () => {
-    const res = await app.request("/library/sync", { method: "POST" });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /sse-connect="\/library\/sync\/stream"/);
-    assert.match(html, /log-panel/);
-  });
-});
-
-// --- Audible sign-in from the UI ---
-
-describe("Audible sign-in flow", () => {
-  const FAKE_HELPER = `python3 ${path.resolve(import.meta.dirname, "resources", "fake_helper.py")}`;
-
-  async function signedInUser(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
-    });
-    return (res.headers.get("set-cookie") || "").split(";")[0];
-  }
-
-  beforeEach(() => {
-    process.env.AUDIBLE_HELPER = FAKE_HELPER;
-  });
-
-  afterEach(() => {
-    delete process.env.AUDIBLE_HELPER;
-  });
-
-  it("offers a connect form when not linked", async () => {
-    const cookie = await signedInUser("alice");
-    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
-    assert.equal(settings.audible.available, true);
-    assert.equal(settings.audible.linked, false);
-    assert.equal(settings.audible.pending, undefined);
-  });
-
-  it("step 1 returns the Amazon URL and the paste form", async () => {
-    const cookie = await signedInUser("alice");
-    const res = await app.request("/user/audible/start", {
-      method: "POST",
-      headers: { cookie },
-      body: new URLSearchParams({ marketplace: "de" }),
-    });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /amazon\.de\/ap\/signin/);
-    assert.match(html, /step 2 of 2/i);
-    assert.match(html, /name="redirect_url"/);
-  });
-
-  it("rejects a pasted value that is not a URL", async () => {
-    const cookie = await signedInUser("alice");
-    await app.request("/user/audible/start", {
-      method: "POST", headers: { cookie },
-      body: new URLSearchParams({ marketplace: "de" }),
-    });
-    const res = await app.request("/user/audible/complete", {
-      method: "POST", headers: { cookie },
-      body: new URLSearchParams({ redirect_url: "not a url" }),
-    });
-    assert.equal(res.status, 400);
-    assert.match(await res.text(), /full address/i);
-  });
-
-  it("rejects a URL without an authorization code", async () => {
-    const cookie = await signedInUser("alice");
-    await app.request("/user/audible/start", {
-      method: "POST", headers: { cookie },
-      body: new URLSearchParams({ marketplace: "de" }),
-    });
-    const res = await app.request("/user/audible/complete", {
-      method: "POST", headers: { cookie },
-      body: new URLSearchParams({ redirect_url: "https://www.audible.de/" }),
-    });
-    assert.equal(res.status, 400);
-    assert.match(await res.text(), /authorization code/i);
-  });
-
-  it("redirects to the library with an auto-sync flag, and reports connected", async () => {
-    const cookie = await signedInUser("alice");
-    await app.request("/user/audible/start", {
-      method: "POST", headers: { cookie },
-      body: new URLSearchParams({ marketplace: "de" }),
-    });
-    const res = await app.request("/user/audible/complete", {
-      method: "POST", headers: { cookie },
-      redirect: "manual",
-      body: new URLSearchParams({
-        redirect_url: "https://www.audible.de/?openid.oa2.authorization_code=ABC123",
+  it("saves a custom ffmpeg args override alongside format/quality", async () => {
+    const cookie = await signedIn("heidi");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audioFormat: "mp3",
+        audioQuality: "low",
+        audioCustomEnabled: true,
+        audioArgs: "-c:a libmp3lame -q:a 0",
       }),
     });
-    assert.equal(res.status, 302);
-    assert.ok(res.headers.get("location")?.endsWith("/?sync=1"), "sends the user to an auto-syncing library");
+    assert.equal(res.status, 200);
 
-    // status is read back from the user's own config dir — the SPA's
-    // equivalent (POST /api/audible/login-complete answering { ok: true },
-    // then the client triggering sync itself) is covered under "Audible
-    // sign-in flow (JSON)".
-    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
-    assert.equal(settings.audible.linked, true);
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("heidi")?.audioSettings, {
+      format: "mp3",
+      quality: "low",
+      customArgs: "-c:a libmp3lame -q:a 0",
+    });
   });
 
-  it("keeps sign-in state separate per user", async () => {
-    const alice = await signedInUser("alice");
-    const bob = await signedInUser("bob");
-    await app.request("/user/audible/start", {
-      method: "POST", headers: { cookie: alice },
-      body: new URLSearchParams({ marketplace: "de" }),
-    });
-    await app.request("/user/audible/complete", {
-      method: "POST", headers: { cookie: alice },
-      body: new URLSearchParams({
-        redirect_url: "https://www.audible.de/?openid.oa2.authorization_code=ABC123",
+  it("ignores audioArgs when audioCustomEnabled isn't set", async () => {
+    const cookie = await signedIn("ivan");
+    await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audioFormat: "aac",
+        audioQuality: "medium",
+        audioArgs: "-c:a something-typed-but-not-enabled",
       }),
     });
 
-    const bobSettings = await (await app.request("/api/settings", { headers: { cookie: bob } })).json();
-    assert.equal(bobSettings.audible.linked, false, "bob must still be unlinked");
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("ivan")?.audioSettings, { format: "aac", quality: "medium" });
   });
 
-  it("cancel clears a pending sign-in", async () => {
-    const cookie = await signedInUser("alice");
-    await app.request("/user/audible/start", {
-      method: "POST", headers: { cookie },
-      body: new URLSearchParams({ marketplace: "de" }),
+  it("drops unknown tag keys and rejects chapter-only tags outside the filename row", async () => {
+    const cookie = await signedIn("nate");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        outputFormat: {
+          directory: [
+            [
+              { type: "tag", value: "author" },
+              { type: "tag", value: "totallyMadeUp" },
+              { type: "tag", value: "chapterNumber" },
+            ],
+          ],
+          filename: [{ type: "tag", value: "chapterNumber" }],
+        },
+      }),
     });
-    const res = await app.request("/user/audible/cancel", { method: "POST", headers: { cookie } });
-    const html = await res.text();
-    assert.ok(!/step 2 of 2/i.test(html), "pending step must be gone");
-    assert.match(html, /Connect Audible/);
+    assert.equal(res.status, 200);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("nate")?.outputFormat?.directory, [[{ type: "tag", value: "author" }]]);
   });
 
-  it("reports the helper as unavailable when it will not start", async () => {
-    // Only reachable via AUDIBLE_HELPER; the built-in client is always there.
-    process.env.FAKE_HELPER_MODE = "missing";
-    const cookie = await signedInUser("alice");
-    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
-    assert.equal(settings.audible.available, false);
-    delete process.env.FAKE_HELPER_MODE;
+  it("a saved multi-level template actually changes where a converted book is found", async () => {
+    const cookie = await signedIn("olivia");
+    await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        outputFormat: {
+          directory: [[{ type: "tag", value: "author" }], [{ type: "tag", value: "title" }]],
+          filename: [{ type: "tag", value: "chapterName" }],
+        },
+      }),
+    });
+
+    const { runWithUser, userDirs } = await import("../src/users.ts");
+    runWithUser("olivia", () => {
+      upsertBook("B0OUTFMT001", { author: "Iain M. Banks", title: "Consider Phlebas" });
+      markDownloaded("B0OUTFMT001", "Iain M. Banks", "Consider Phlebas", "/x/B0OUTFMT001.aaxc");
+    });
+    const nested = path.join(userDirs("olivia").outputDir, "Iain M. Banks", "Consider Phlebas");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, "Prologue.mp3"), "");
+
+    const status = await (await app.request("/api/status", { headers: { cookie } })).json();
+    assert.equal(status.converted, 1, "found under the nested author/title path the template describes");
   });
 });
 
@@ -1365,10 +1032,10 @@ describe("Audible sign-in flow (JSON)", () => {
   const FAKE_HELPER = `python3 ${path.resolve(import.meta.dirname, "resources", "fake_helper.py")}`;
 
   async function signedInUser(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
+    const res = await app.request("/api/users", {
       method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
     });
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
@@ -1447,10 +1114,10 @@ describe("Audible sign-in flow (JSON)", () => {
 
 describe("POST /api/library/reset", () => {
   async function signedInUser(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
+    const res = await app.request("/api/users", {
       method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
     });
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
@@ -1466,6 +1133,22 @@ describe("POST /api/library/reset", () => {
     assert.equal(res.status, 204);
   });
 
+  it("clears only the signed-in user's library, leaving other users untouched", async () => {
+    const alice = await signedInUser("alice");
+    const bob = await signedInUser("bob");
+    const { runWithUser } = await import("../src/users.ts");
+    runWithUser("alice", () => markDownloaded("B0RESET0001", "A", "Alice Book", "/a.aaxc"));
+    runWithUser("bob", () => markDownloaded("B0RESET0002", "B", "Bob Book", "/b.aaxc"));
+
+    const res = await app.request("/api/library/reset", { method: "POST", headers: { cookie: alice } });
+    assert.equal(res.status, 204);
+
+    const aliceBooks = await (await app.request("/api/books", { headers: { cookie: alice } })).json();
+    const bobBooks = await (await app.request("/api/books", { headers: { cookie: bob } })).json();
+    assert.equal(aliceBooks.length, 0, "alice's library is cleared");
+    assert.equal(bobBooks.length, 1, "bob's library is untouched");
+  });
+
   it("refuses (409) while an operation is running", async () => {
     const cookie = await signedInUser("alice");
     startOperation("sync");
@@ -1476,29 +1159,9 @@ describe("POST /api/library/reset", () => {
   });
 });
 
-// --- One-click prepare flow ---
-
-describe("POST /prepare/:asin", () => {
-  it("rejects invalid ASINs", async () => {
-    const res = await app.request("/prepare/nope", { method: "POST" });
-    assert.equal(res.status, 400);
-  });
-
-  it("returns a log panel wired to the prepare stream", async () => {
-    markDownloaded("B0PREPARE1", "Author", "Prep Book", "/x.aaxc");
-    const res = await app.request("/prepare/B0PREPARE1", { method: "POST" });
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /sse-connect="\/prepare\/stream"/);
-    assert.match(html, /id="op-download"/, "carries the slot for the auto-download");
-  });
-
-  it("refuses to start while another operation runs", async () => {
-    startOperation("sync");
-    const res = await app.request("/prepare/B0PREPARE2", { method: "POST" });
-    assert.equal(res.status, 409);
-  });
-});
+// POST /prepare/:asin (the old HTML-fragment route) is gone — its coverage
+// (invalid ASIN, queues + starts, 409 while busy) lives on
+// POST /api/prepare/:asin under "operation-start JSON endpoints" above.
 
 describe("POST /open-output", () => {
   it("does not exist outside desktop mode", async () => {
@@ -1508,10 +1171,9 @@ describe("POST /open-output", () => {
     assert.equal(res.status, 404);
   });
 
-  it("is not offered in the server UI", async () => {
-    const html = await (await app.request("/")).text();
-    assert.ok(!html.includes("/open-output"), "no Open folder button");
-  });
+  // Whether the Open Folder button appears (vs. a ZIP download link) is
+  // client-rendered now (Topbar.tsx branches on session.desktop) — covered
+  // by test/ui/*.test.ts.
 });
 
 // Row action labels/wiring are entirely client-rendered now
@@ -1525,82 +1187,12 @@ describe("POST /open-output", () => {
 // client-rendered now (table/BooksTable.tsx, using TanStack Table's column
 // order state rather than a baked-in index) — covered by test/ui/*.test.ts.
 
-describe("POST /api/column-prefs", () => {
-  async function signedIn(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
-    });
-    return (res.headers.get("set-cookie") || "").split(";")[0];
-  }
-
-  it("saves the signed-in user's column prefs", async () => {
-    const cookie = await signedIn("alice");
-    const res = await app.request("/api/column-prefs", {
-      method: "POST",
-      headers: { cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ hidden: ["asin", "format"], order: ["title", "series"] }),
-    });
-    assert.equal(res.status, 204);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("alice")?.columnPrefs, { hidden: ["asin", "format"], order: ["title", "series"] });
-  });
-
-  it("no-ops in legacy mode (no signed-in user to attach it to)", async () => {
-    const res = await app.request("/api/column-prefs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hidden: ["asin"], order: [] }),
-    });
-    assert.equal(res.status, 204);
-  });
-
-  it("rejects invalid JSON", async () => {
-    const cookie = await signedIn("bob");
-    const res = await app.request("/api/column-prefs", {
-      method: "POST",
-      headers: { cookie, "Content-Type": "application/json" },
-      body: "not json",
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it("ignores non-string entries instead of storing garbage", async () => {
-    const cookie = await signedIn("carol");
-    const res = await app.request("/api/column-prefs", {
-      method: "POST",
-      headers: { cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ hidden: ["asin", 42, null], order: "not-an-array" }),
-    });
-    assert.equal(res.status, 204);
-
-    const { getUser } = await import("../src/users.ts");
-    assert.deepEqual(getUser("carol")?.columnPrefs, { hidden: ["asin"], order: [] });
-  });
-
-  it("keeps each user's saved prefs separate", async () => {
-    const alice = await signedIn("dave");
-    const bob = await signedIn("erin");
-
-    await app.request("/api/column-prefs", {
-      method: "POST",
-      headers: { cookie: alice, "Content-Type": "application/json" },
-      body: JSON.stringify({ hidden: ["asin"], order: [] }),
-    });
-
-    const { getUser } = await import("../src/users.ts");
-    assert.equal(getUser("erin")?.columnPrefs, undefined, "a different user sees no saved prefs");
-  });
-});
-
 describe("GET/POST /api/table-state", () => {
   async function signedIn(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
+    const res = await app.request("/api/users", {
       method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
     });
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
@@ -1684,42 +1276,4 @@ describe("GET/POST /api/table-state", () => {
   });
 });
 
-describe("POST /user/reset-db", () => {
-  async function signedIn(name: string): Promise<string> {
-    const res = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name }),
-      redirect: "manual",
-    });
-    return (res.headers.get("set-cookie") || "").split(";")[0];
-  }
 
-  // The confirmation prompt is client-rendered now (Settings.tsx's danger
-  // zone uses useConfirm() instead of a data-confirm form attribute) —
-  // covered by test/ui/*.test.ts.
-
-  it("clears that user's library only", async () => {
-    const alice = await signedIn("alice");
-    const bob = await signedIn("bob");
-    const { runWithUser } = await import("../src/users.ts");
-    runWithUser("alice", () => markDownloaded("B0RESET0001", "A", "Alice Book", "/a.aaxc"));
-    runWithUser("bob", () => markDownloaded("B0RESET0002", "B", "Bob Book", "/b.aaxc"));
-
-    const res = await app.request("/user/reset-db", { method: "POST", headers: { cookie: alice } });
-    assert.equal(res.status, 200);
-    assert.match(await res.text(), /database reset/i);
-
-    const aliceBooks = await (await app.request("/api/books", { headers: { cookie: alice } })).json();
-    const bobBooks = await (await app.request("/api/books", { headers: { cookie: bob } })).json();
-    assert.equal(aliceBooks.length, 0, "alice's library is cleared");
-    assert.equal(bobBooks.length, 1, "bob's library is untouched");
-  });
-
-  it("refuses while an operation is running", async () => {
-    const cookie = await signedIn("alice");
-    startOperation("sync");
-    const res = await app.request("/user/reset-db", { method: "POST", headers: { cookie } });
-    assert.equal(res.status, 400);
-    assert.match(await res.text(), /operation is running/i);
-  });
-});

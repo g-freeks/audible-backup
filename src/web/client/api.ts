@@ -23,7 +23,11 @@ export class ApiRequestError extends Error {
 /** A 401/403 from any /api/* call means the session is gone or (in desktop
  * mode) the per-launch token cookie hasn't been set yet — either way, a
  * full document reload re-runs the guard middleware and either lands on
- * /login or re-applies the ?token= the desktop shell opened with. */
+ * /login or re-applies the ?token= the desktop shell opened with. Not on
+ * /login itself, though: background checks mounted app-wide (the operation
+ * poll in useOperation, for one) run there too, before any session exists,
+ * and are expected to 401 — reloading there would just loop forever instead
+ * of ever letting the login form render. */
 function isAuthFailure(status: number): boolean {
   return status === 401 || status === 403;
 }
@@ -35,10 +39,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (isAuthFailure(res.status)) {
-    location.reload();
-    // location.reload() doesn't stop execution synchronously in every
-    // browser, so throw to unwind the caller rather than let it act on a
-    // response that was never actually authorized.
+    if (location.pathname !== "/login") {
+      location.reload();
+      // location.reload() doesn't stop execution synchronously in every
+      // browser, so throw to unwind the caller rather than let it act on a
+      // response that was never actually authorized.
+    }
     throw new ApiRequestError(res.status, "Unauthorized");
   }
 

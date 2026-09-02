@@ -125,16 +125,18 @@ export function LibraryPage() {
       <button
         id="sync-library-btn"
         className="btn btn-sm btn-icon btn-ghost"
-        aria-label="Sync Library"
+        aria-label={syncing ? "Cancel sync library" : "Sync Library"}
         title="Fetch latest library listing from Audible"
         disabled={op.running && !syncing}
+        data-cancel={syncing ? "true" : undefined}
         onClick={() => (syncing ? op.cancel() : runOperation(() => api.operation.sync()))}
       >
-        <RefreshIcon spinning={syncing} />
+        <SyncIcons />
       </button>
       <div className="search-wrap">
         <input
           type="text"
+          id="search-input"
           placeholder="Search by title, author, or ASIN..."
           autoComplete="off"
           value={state.globalFilter}
@@ -142,6 +144,7 @@ export function LibraryPage() {
         />
         {state.globalFilter && (
           <button
+            id="search-clear"
             type="button"
             className="search-clear"
             aria-label="Clear search"
@@ -152,13 +155,19 @@ export function LibraryPage() {
         )}
       </div>
       <button
+        id="download-selected-btn"
         className="btn btn-sm btn-primary"
         disabled={op.running || selectedAsins.length === 0}
         onClick={downloadSelected}
       >
         Download Selected
       </button>
-      <button className="btn btn-sm btn-primary" disabled={op.running} onClick={downloadAllRemaining}>
+      <button
+        id="download-all-btn"
+        className="btn btn-sm btn-primary"
+        disabled={op.running}
+        onClick={downloadAllRemaining}
+      >
         Download All
       </button>
       <ColumnsMenu table={table} />
@@ -177,16 +186,19 @@ export function LibraryPage() {
   );
 }
 
-function RefreshIcon({ spinning }: { spinning: boolean }) {
+/** Both icons stay in the DOM at all times — theme.css's
+ * .btn-icon[data-cancel] rules swap which one shows via CSS (spinning
+ * refresh normally, a red X on hover), matching the old REFRESH_ICON/
+ * CANCEL_ICON pair in books.ts exactly. */
+function SyncIcons() {
   return (
-    <svg
-      className={spinning ? "icon-refresh" : undefined}
-      style={spinning ? { animation: "spin 1s linear infinite" } : undefined}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08a5.99 5.99 0 01-5.65 4c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-    </svg>
+    <>
+      <svg className="icon-refresh" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08a5.99 5.99 0 01-5.65 4c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+      </svg>
+      <svg className="icon-cancel" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+      </svg>
+    </>
   );
 }

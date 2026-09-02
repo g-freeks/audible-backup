@@ -12,9 +12,9 @@ import * as path from "path";
  * serveStatic resolves its `root` against the process's working directory, so
  * a relative root only worked when the server happened to be started from the
  * repository root. A desktop launcher starts it from wherever the session
- * began, and every script 404'd — which does not look like a crash. The page
- * still rendered, plain HTML forms (sign-in, activation bytes) still worked,
- * and only the htmx-driven buttons went dead, silently.
+ * began, and every asset 404'd — which does not look like a crash. The shell
+ * HTML still rendered; the React bundle it links to just silently failed to
+ * load, leaving a blank page.
  *
  * Route-level tests cannot catch this: serveStatic is mounted in server.ts,
  * not in routes.ts, so it takes a real process to see it.
@@ -22,7 +22,7 @@ import * as path from "path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TOKEN = "static-test-token";
-const SCRIPTS = ["app.js", "htmx.min.js", "sse.js"];
+const ASSETS = ["app.js", "app.css"];
 
 interface RunningServer {
   origin: string;
@@ -81,14 +81,14 @@ describe("static assets do not depend on the working directory", () => {
     const headers = { cookie: `desktop_token=${TOKEN}` };
 
     try {
-      for (const script of SCRIPTS) {
-        const res = await fetch(`${server.origin}/static/${script}`, { headers });
+      for (const asset of ASSETS) {
+        const res = await fetch(`${server.origin}/static/${asset}`, { headers });
         assert.equal(
           res.status,
           200,
-          `/static/${script} must load, or htmx never runs and every hx-* button dies`,
+          `/static/${asset} must load, or the React client never mounts`,
         );
-        assert.ok((await res.text()).length > 0, `/static/${script} is empty`);
+        assert.ok((await res.text()).length > 0, `/static/${asset} is empty`);
       }
 
       // The same absolute root must not become a way out of the directory.

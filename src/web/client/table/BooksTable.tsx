@@ -51,16 +51,17 @@ function DraggableHeader({
       ref={draggable ? setNodeRef : undefined}
       style={style}
       className={sortable ? `sortable${sortDir ? ` ${sortDir}` : ""}` : undefined}
+      // The click handler lives on the <th> itself, not the inner span —
+      // .th-inner only wraps its text, so a click anywhere else in the
+      // cell's padding (most of a wide column like Title) would otherwise
+      // miss it entirely, unlike the old UI where the whole header cell was
+      // clickable.
+      onClick={sortable ? column.getToggleSortingHandler() : undefined}
       {...(draggable ? attributes : {})}
       {...(draggable ? listeners : {})}
     >
       {header.isPlaceholder ? null : (
-        <span
-          className="th-inner"
-          onClick={sortable ? column.getToggleSortingHandler() : undefined}
-        >
-          {flexRender(header.column.columnDef.header, header.getContext())}
-        </span>
+        <span className="th-inner">{flexRender(header.column.columnDef.header, header.getContext())}</span>
       )}
       {column.getCanFilter() && <ColumnFilter column={column} />}
     </th>

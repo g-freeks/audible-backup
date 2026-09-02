@@ -50,6 +50,18 @@ export const columns = [
     id: "select",
     size: 32,
     enableHiding: false,
+    header: ({ table }) => (
+      <input
+        type="checkbox"
+        id="select-all"
+        aria-label="Select all visible books"
+        checked={table.getIsAllRowsSelected()}
+        ref={(el) => {
+          if (el) el.indeterminate = table.getIsSomeRowsSelected() && !table.getIsAllRowsSelected();
+        }}
+        onChange={table.getToggleAllRowsSelectedHandler()}
+      />
+    ),
   }),
   helper.accessor("title", {
     id: "title",

@@ -16,11 +16,12 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # Browser tests: htmx swaps, CSP enforcement and delegated handlers can only
-  # be verified in a real browser, so these run against a live server. WebKit
-  # runs alongside Chromium because the desktop shell embeds WebKitGTK, and
-  # engine differences (CSP quirks, event timing) are exactly what a
-  # Chromium-only suite would miss.
+  # Browser tests: the React client's interactive behavior (drag-and-drop,
+  # SSE-driven UI, CSP enforcement) can only be verified in a real browser,
+  # so these run against a live server, against the committed
+  # src/web/static/app.js build. WebKit runs alongside Chromium because the
+  # desktop shell embeds WebKitGTK, and engine differences (CSP quirks, event
+  # timing) are exactly what a Chromium-only suite would miss.
   ui:
     runs-on: ubuntu-latest
     strategy:
