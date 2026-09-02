@@ -72,3 +72,10 @@ export function clearOperation(): void {
     }, 5000);
   }
 }
+
+/** Test-only: bypasses clearOperation()'s 5-second grace period so each test
+ * starts with a clean slate instead of racing a previous test's still-not-
+ * yet-nulled (but already finished) operation. Mirrors closeDb() in db.ts. */
+export function resetOperationForTest(): void {
+  activeOperation = null;
+}

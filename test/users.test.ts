@@ -14,7 +14,7 @@ import {
   userDirs,
   runWithUser,
   currentUserName,
-  setColumnPrefs,
+  setTableState,
   setAudioSettings,
   setOutputFormat,
 } from "../src/users.ts";
@@ -120,31 +120,28 @@ describe("per-user database isolation", () => {
   });
 });
 
-describe("column prefs", () => {
-  it("saves and reads back a user's books-table column choices", () => {
+describe("table state", () => {
+  it("saves and reads back a user's books-table state snapshot", () => {
     addUser("alice");
-    assert.equal(getUser("alice")?.columnPrefs, undefined, "nothing saved yet");
+    assert.equal(getUser("alice")?.tableState, undefined, "nothing saved yet");
 
-    setColumnPrefs("alice", { hidden: ["asin", "format"], order: ["title", "author"] });
-    assert.deepEqual(getUser("alice")?.columnPrefs, {
-      hidden: ["asin", "format"],
-      order: ["title", "author"],
+    setTableState("alice", { sorting: [{ id: "title", desc: false }], columnOrder: ["title", "author"] });
+    assert.deepEqual(getUser("alice")?.tableState, {
+      sorting: [{ id: "title", desc: false }],
+      columnOrder: ["title", "author"],
     });
   });
 
   it("survives the same round trip a fresh process would see (persisted to disk)", () => {
     addUser("alice");
-    setColumnPrefs("alice", { hidden: ["asin"], order: [] });
+    setTableState("alice", { globalFilter: "dune" });
     // listUsers() re-reads users.json from disk rather than any in-memory
     // cache, so this stands in for "the app restarted".
-    assert.deepEqual(listUsers().find((u) => u.name === "alice")?.columnPrefs, {
-      hidden: ["asin"],
-      order: [],
-    });
+    assert.deepEqual(listUsers().find((u) => u.name === "alice")?.tableState, { globalFilter: "dune" });
   });
 
   it("rejects an unknown user", () => {
-    assert.throws(() => setColumnPrefs("nobody", { hidden: [], order: [] }), /Unknown user/);
+    assert.throws(() => setTableState("nobody", {}), /Unknown user/);
   });
 });
 

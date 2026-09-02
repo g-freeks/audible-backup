@@ -26,6 +26,10 @@ node --test test/converter.test.ts
 # Start the web server (Hono on port 3000)
 npm run server
 
+# Rebuild the React client after editing src/web/client/ — commit the output
+npm run build:client
+npm run build:client:watch  # rebuild on change during development
+
 # CLI commands
 npm run sync          # Download new audiobooks
 npm run convert       # Convert AAX to chapter-split MP3s
@@ -38,7 +42,7 @@ npm run db-reset      # Reset the database
 
 ## Architecture
 
-**Runtime**: Pure TypeScript executed directly by Node 24 via native type stripping (no build step). Uses Node's built-in `node:sqlite` (WAL mode) for persistence.
+**Runtime**: The server and CLI are pure TypeScript executed directly by Node 24 via native type stripping (no build step). Uses Node's built-in `node:sqlite` (WAL mode) for persistence. The one exception is the web client (below), which is a React app built by esbuild into a committed static bundle — Flathub builds have no network and skip devDependencies when vendoring, so the bundle has to already exist in git; there is nothing for the Flatpak build itself to compile.
 
 **Core modules** (`src/`):
 - `config.ts` — Loads `.env` manually (no dotenv dependency), exports a `config` object. Environment variables override `.env` values.
@@ -71,14 +75,14 @@ npm run db-reset      # Reset the database
 - `operations.ts` — Global singleton tracking the currently active operation (sync or convert), ensuring only one runs at a time.
 
 **Web layer** (`src/web/`):
-- `routes.ts` — Hono routes serving HTML pages and a JSON API (`/api/status`, `/api/books`). A session middleware resolves the current user from a cookie (in-memory sessions in `sessions.ts`) and wraps handlers in `runWithUser`; `/login`, `/user/switch`, and `/user/add` are public. POST endpoints for sync/convert return HTMX fragments that connect to SSE streams (streams are only visible to the operation's owner). GET `/download/converted/:asin` streams a converted book as a ZIP; GET `/download/aax/:asin` streams the original AAX file. All ASIN params are validated against `^[A-Z0-9]{10}$`.
+- `routes.ts` — Hono routes serving one SPA shell (`spaShell()`, for `/`, `/login`, `/user/settings`) plus a JSON API (`/api/books`, `/api/session`, `/api/settings`, operation-start endpoints, etc.). A session middleware resolves the current user from a cookie (in-memory sessions in `sessions.ts`) and wraps handlers in `runWithUser`; `/login` and the account-creation/login writes (`POST /api/users`, `POST /api/session`) are public — everything else 401s a missing session rather than redirecting, since a SPA `fetch()` would otherwise follow a redirect transparently and receive the login page with status 200. Operation-start endpoints (sync/download/convert/prepare) return `{ type, queued }`, then the client subscribes to `GET /api/operation/stream` for progress (visible only to the operation's owner). GET `/download/converted/:asin` streams a converted book as a ZIP; GET `/download/aax/:asin` streams the original AAX file. All ASIN params are validated against `^[A-Z0-9]{10}$`.
 - `zip.ts` — Dependency-free store-only streaming ZIP writer (no zip64; 4 GB cap) used for browser downloads.
-- `sse.ts` — Bridges `EventReporter` events to SSE responses for real-time log streaming to the browser.
+- `sse.ts` — `sseJsonStream()` bridges `EventReporter` events to the client as named SSE events with JSON payloads (`log`, `progress`, `book`, `done`) for the operation log panel and per-row status.
 - `pending-logins.ts` — In-memory, per-user state (serial + PKCE verifier) bridging the two Audible sign-in requests. Deliberately not persisted; an interrupted sign-in is restarted.
-- `templates/` — Server-rendered HTML templates. `html.ts` provides an auto-escaping `html` tagged template (`raw()` for trusted fragments); `components.ts` holds shared badge/progress fragments used by pages, SSE events, and OOB swaps. Templates contain no inline JS — all client behavior lives in `static/app.js` (delegated listeners, so it survives HTMX swaps), which enables the strict CSP set in `routes.ts` via `secureHeaders`.
+- `client/` — The React (19) + TypeScript SPA: Base UI for accessible primitives (Menu, Tabs, Switch, Select, Toast, AlertDialog, Popover), TanStack Table v9 + TanStack Virtual for the books table (sorting, per-column filtering including faceted/date-range/number-range, column visibility/order/sizing, row selection), `@dnd-kit` for the two drag interactions (column reorder, the Settings output-naming chip builder). `theme.css` ports the app's Adwaita-matching look verbatim (same class names as the old server-rendered markup), so the desktop shell keeps looking native. Built by `node scripts/build-client.mjs` (esbuild) into `src/web/static/app.js` + `app.css`, both **committed** — Flathub builds have no network and skip devDependencies (`scripts/generate-flatpak-sources.mjs`), so the built bundle must already exist in git; run the build script and commit the output whenever `src/web/client/` changes. `npm run build:client:watch` rebuilds on change during development. React, Base UI, TanStack and `@dnd-kit` are `devDependencies`, not `dependencies` — the server never imports them, only the build script does.
 - `server.ts` (repo root) — Enables HTTP basic auth when `WEB_USER` and `WEB_PASSWORD` are both set.
 
-**Testing**: `test/*.test.ts` are fast unit/route tests (no browser). `test/ui/*.test.ts` spawn a real server via `test/ui/fixture.ts` and drive it with Chromium by default — they exist for behavior HTML-level tests cannot see: htmx attribute inheritance, CSP enforcement, and delegated event handlers. `.dockerignore` excludes both. In the dev container Chromium is found at `/opt/pw-browsers/chromium`; override with `CHROMIUM_PATH`. Set `BROWSER=webkit` to run the same suite against WebKit instead (override its executable with `WEBKIT_PATH`) — CI runs both, since the desktop shell embeds WebKitGTK and a Chromium-only suite would miss engine differences. If a host has no Node 24 of its own and you run either suite inside a `flatpak run <runtime>` sandbox to borrow one, `unset FLATPAK_ID` first — Flatpak sets it automatically, and the app treats its presence as a signal it's running as the packaged desktop app, which puts every route behind the per-launch token guard and turns into a wall of unrelated-looking 403s.
+**Testing**: `test/*.test.ts` are fast unit/route tests (no browser) — route tests exercise the JSON API directly via Hono's `app.request()`. `test/ui/*.test.ts` spawn a real server via `test/ui/fixture.ts` and drive it with Chromium by default, against the *committed* `src/web/static/app.js` build — they exist for behavior the route tests cannot see: the React client actually mounting, drag-and-drop, SSE-driven UI updates, CSP enforcement. `.dockerignore` excludes both. In the dev container Chromium is found at `/opt/pw-browsers/chromium`; override with `CHROMIUM_PATH`. Set `BROWSER=webkit` to run the same suite against WebKit instead (override its executable with `WEBKIT_PATH`) — CI runs both, since the desktop shell embeds WebKitGTK and a Chromium-only suite would miss engine differences. If a host has no Node 24 of its own and you run either suite inside a `flatpak run <runtime>` sandbox to borrow one, `unset FLATPAK_ID` first — Flatpak sets it automatically, and the app treats its presence as a signal it's running as the packaged desktop app, which puts every route behind the per-launch token guard and turns into a wall of unrelated-looking 403s.
 
 **Key patterns**:
 - `AudibleLibrary` and `Converter` both accept a `ProgressReporter` via constructor injection — `consoleReporter` for CLI use, `EventReporter` for web use.

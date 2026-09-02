@@ -1,10 +1,14 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { EventReporter } from "../progress.ts";
-import { escapeHtml } from "./templates/html.ts";
-import { badge, bookStatusSwap, progressBar } from "./templates/components.ts";
 
-export function sseStream(c: Context, reporter: EventReporter): Response {
+/**
+ * Bridges an operation's EventReporter to the client as Server-Sent Events:
+ * each reporter event becomes a named SSE event with a JSON payload, and the
+ * five per-book listeners collapse into one "book" event so the client has
+ * a single case to switch on.
+ */
+export function sseJsonStream(c: Context, reporter: EventReporter): Response {
   return streamSSE(c, async (stream) => {
     let closed = false;
     let streamDone: () => void;
@@ -12,98 +16,27 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
       streamDone = resolve;
     });
 
-    const onMessage = async (data: { type: string; message: string }) => {
+    const write = async (event: string, data: unknown) => {
       if (closed) return;
       try {
-        await stream.writeSSE({
-          data: `<div class="log-line ${data.type}">${escapeHtml(data.message)}</div>`,
-          event: "log",
-        });
+        await stream.writeSSE({ data: JSON.stringify(data), event });
       } catch {
         // client disconnected
       }
     };
 
-    const onProgress = async (data: { percent: number; label: string }) => {
-      if (closed) return;
-      try {
-        await stream.writeSSE({
-          data: `<div id="op-progress" hx-swap-oob="true"><div class="progress-bar progress-bar-lg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${data.percent}"><div class="progress-bar-fill" style="width:${data.percent}%;animation:none"></div></div><small class="progress-label">${escapeHtml(data.label)}: ${data.percent}%</small></div>`,
-          event: "log",
-        });
-      } catch {
-        // client disconnected
-      }
-    };
+    const onMessage = (data: { type: string; message: string }) => write("log", data);
+    const onProgress = (data: { percent: number; label: string }) => write("progress", data);
+    const onBookStart = (data: { asin: string }) => write("book", { asin: data.asin, state: "processing" });
+    const onBookProgress = (data: { asin: string; percent: number }) =>
+      write("book", { asin: data.asin, state: "processing", percent: data.percent });
+    const onBookDone = (data: { asin: string; success: boolean }) =>
+      write("book", { asin: data.asin, state: data.success ? "done" : "failed" });
 
-    const onBookStart = async (data: { asin: string }) => {
+    const onDone = async (result: { success: boolean; summary?: string; downloadUrl?: string }) => {
       if (closed) return;
       try {
-        await stream.writeSSE({
-          data: bookStatusSwap(data.asin, badge("warn", "Processing…") + progressBar()),
-          event: "log",
-        });
-      } catch {
-        // client disconnected
-      }
-    };
-
-    const onBookProgress = async (data: { asin: string; percent: number }) => {
-      if (closed) return;
-      try {
-        await stream.writeSSE({
-          data: bookStatusSwap(
-            data.asin,
-            badge("warn", `${data.percent}%`) + progressBar(data.percent),
-          ),
-          event: "log",
-        });
-      } catch {
-        // client disconnected
-      }
-    };
-
-    const onBookDone = async (data: { asin: string; success: boolean }) => {
-      if (closed) return;
-      try {
-        await stream.writeSSE({
-          data: bookStatusSwap(
-            data.asin,
-            data.success ? badge("success", "Done") : badge("danger", "Failed"),
-          ),
-          event: "log",
-        });
-      } catch {
-        // client disconnected
-      }
-    };
-
-    const onDone = async (result: {
-      success: boolean;
-      summary?: string;
-      downloadUrl?: string;
-    }) => {
-      if (closed) return;
-      try {
-        await stream.writeSSE({
-          data: `<div id="op-progress" hx-swap-oob="true"></div>`,
-          event: "log",
-        });
-        if (result.success && result.downloadUrl) {
-          // app.js picks this up when the stream closes and starts the download.
-          await stream.writeSSE({
-            data: `<div id="op-download" hx-swap-oob="true" data-download-url="${escapeHtml(result.downloadUrl)}"></div>`,
-            event: "log",
-          });
-        }
-        await stream.writeSSE({
-          data: `<div class="log-done ${result.success ? "success" : "error"}">${escapeHtml(result.summary || "Done")}</div>`,
-          event: "log",
-        });
-        await stream.writeSSE({
-          data: "",
-          event: "done",
-        });
+        await stream.writeSSE({ data: JSON.stringify(result), event: "done" });
       } catch {
         // client disconnected
       } finally {
@@ -130,15 +63,16 @@ export function sseStream(c: Context, reporter: EventReporter): Response {
     reporter.on("book-done", onBookDone);
     reporter.on("done", onDone);
 
-    // Replay any events that were emitted before the SSE stream connected
+    // Replay any events that were emitted before the SSE stream connected.
     reporter.replay();
 
     stream.onAbort(() => {
       cleanup();
     });
 
-    // Keep the stream open until the operation completes or the client disconnects.
-    // Without this, the async callback returns immediately and Hono closes the stream.
+    // Keep the stream open until the operation completes or the client
+    // disconnects — otherwise the async callback returns immediately and
+    // Hono closes the stream.
     await streamPromise;
   }) as unknown as Response;
 }

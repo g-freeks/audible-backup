@@ -113,15 +113,16 @@ else
     sed 's/^/     | /' "$LOG"
   fi
 
-  # A page that renders is not a page that works. Every button in the UI is
-  # htmx-driven, so if these 404 the app looks fine and does nothing at all.
+  # A page that renders is not a page that works — the shell is a near-empty
+  # HTML document, so if the React bundle or its stylesheet 404, the app
+  # looks fine and does nothing at all.
   ASSETS_OK=1
-  for SCRIPT in htmx.min.js app.js sse.js; do
+  for ASSET in app.js app.css; do
     CODE=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' --max-time 20 \
-      "${URL%%\?*}static/$SCRIPT" || echo 000)
-    [ "$CODE" = "200" ] || { fail "/static/$SCRIPT returned HTTP $CODE"; ASSETS_OK=0; }
+      "${URL%%\?*}static/$ASSET" || echo 000)
+    [ "$CODE" = "200" ] || { fail "/static/$ASSET returned HTTP $CODE"; ASSETS_OK=0; }
   done
-  [ "$ASSETS_OK" = "1" ] && pass "every client script is served"
+  [ "$ASSETS_OK" = "1" ] && pass "the client bundle and stylesheet are served"
 
   # The token gate is the only thing protecting a loopback server that holds
   # Audible credentials, so a build that lost it must not ship.

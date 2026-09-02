@@ -6,7 +6,7 @@ import * as os from "os";
 import { Hono } from "hono";
 import { routes } from "../src/web/routes.ts";
 import { closeDb, markDownloaded } from "../src/db.ts";
-import { clearOperation } from "../src/operations.ts";
+import { resetOperationForTest } from "../src/operations.ts";
 import { isDesktopMode, desktopPaths } from "../src/config.ts";
 import {
   userDirs,
@@ -41,7 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  clearOperation();
+  resetOperationForTest();
   closeDb();
   delete process.env.AUDIBLE_DESKTOP;
   delete process.env.AUDIBLE_DESKTOP_TOKEN;
@@ -134,21 +134,17 @@ describe("single-user desktop UI", () => {
     runWithUser(DESKTOP_USER, () =>
       markDownloaded("B0DESKTOP1", "Author", "Desktop Book", "/x.aaxc"),
     );
-    const html = await (await app.request("/", withToken)).text();
-    assert.match(html, /Desktop Book/);
+    const shell = await app.request("/", withToken);
+    assert.equal(shell.status, 200);
+
+    const books = await (await app.request("/api/books", withToken)).json();
+    assert.ok(books.some((b: { title: string }) => b.title === "Desktop Book"));
   });
 
-  it("shows Settings but no account controls", async () => {
-    const html = await (await app.request("/", withToken)).text();
-    assert.match(html, /href="\/user\/settings"/);
-    assert.ok(!html.includes("Sign in / Add user"), "no sign-in prompt");
-    assert.ok(!html.includes("Sign out"), "no sign-out");
-    // topbar-actions holds the user switcher when there is one; topbar-center
-    // (search/Columns/etc.) legitimately has its own dropdowns.
-    const actions = html.match(/<div class="topbar-actions">[\s\S]*?<\/div>\s*<\/header>/)?.[0] || "";
-    assert.ok(!actions.includes("data-dropdown-toggle"), "no user switcher in the topbar");
-    assert.match(html, /id="log-toggle"/, "log button is still there");
-  });
+  // Account controls (topbar, user switcher) are client-rendered now
+  // (Topbar.tsx branches on session.desktop) — the state behind them is
+  // already covered by "has no JSON account management endpoints, but
+  // keeps GET /api/session" below.
 
   it("has no account management routes", async () => {
     for (const p of ["/login", "/user/add", "/user/switch", "/user/logout"]) {
@@ -157,29 +153,42 @@ describe("single-user desktop UI", () => {
     }
   });
 
+  it("has no JSON account management endpoints, but keeps GET /api/session", async () => {
+    for (const req of [
+      { path: "/api/session", method: "POST" },
+      { path: "/api/session", method: "DELETE" },
+      { path: "/api/users", method: "POST" },
+    ]) {
+      const res = await app.request(req.path, { method: req.method, ...withToken });
+      assert.equal(res.status, 404, `${req.method} ${req.path} should not exist in desktop mode`);
+    }
+
+    const session = await app.request("/api/session", withToken);
+    assert.equal(session.status, 200);
+    assert.deepEqual(await session.json(), { desktop: true, current: null, others: [] });
+  });
+
   it("shows which build is running", async () => {
     // A packaged install gives no other way to tell whether an update
     // actually landed, which is the whole reason this line exists.
-    const html = await (await app.request("/user/settings", withToken)).text();
-    assert.match(html, /Audible Backup [\d.]+ · /, "version and build are shown");
+    const settings = await (await app.request("/api/settings", withToken)).json();
+    assert.match(settings.version, /[\d.]+ · /, "version and build are shown");
   });
 
-  it("reaches settings without a session and hides the password field", async () => {
-    const res = await app.request("/user/settings", withToken);
+  it("reaches settings without a session, with the account fields desktop mode hides", async () => {
+    const res = await app.request("/api/settings", withToken);
     assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /Connect Audible|Audible account/, "Audible setup is still offered");
-    assert.match(html, /Reset database/);
-    assert.ok(!/name="password"/.test(html), "no password field without accounts");
-    assert.ok(!/Settings — /.test(html), "no user name in the heading");
+    const settings = await res.json();
+    assert.equal(settings.audible.available, true, "Audible setup is still offered");
+    assert.equal(settings.desktop, true, "no password field or user-name heading — Settings.tsx branches on this");
   });
 });
 
 describe("finished audiobooks on the desktop", () => {
-  it("offers to open the output folder instead of a ZIP download", async () => {
-    const html = await (await app.request("/", withToken)).text();
-    assert.match(html, /hx-post="\/open-output"/, "Open folder button is present");
-  });
+  // The Open Folder button (vs. a ZIP download link) is client-rendered
+  // now (Topbar.tsx branches on session.desktop) — POST /open-output itself
+  // is covered by "creates the output folder and asks the desktop to open
+  // it" below.
 
   it("creates the output folder and asks the desktop to open it", async () => {
     ensureDesktopUser();

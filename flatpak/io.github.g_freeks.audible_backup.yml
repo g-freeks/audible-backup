@@ -51,8 +51,13 @@ modules:
     build-options:
       append-path: /usr/lib/sdk/node24/bin
     build-commands:
-      # Node 24 runs the TypeScript sources directly by stripping types, so
-      # there is nothing to compile and no build output to install.
+      # Node 24 runs the server/CLI TypeScript sources directly by stripping
+      # types, so there is nothing to compile for those. The one exception,
+      # the React web client, is built ahead of time and its output
+      # (src/web/static/app.js + app.css) is committed to git — Flathub
+      # builds have no network, so nothing here can run a bundler. The `cp
+      # -r ... src` below ships that committed bundle along with everything
+      # else in src/; see src/web/client/ in CLAUDE.md.
       - install -Dm755 /usr/lib/sdk/node24/bin/node /app/bin/node
 
       - install -d /app/share/audible-backup

@@ -1,102 +1,8 @@
-import { escapeHtml } from "./html.ts";
+/* Ported verbatim from src/web/templates/layout.ts and user.ts's
+   formStyles — the React client reuses these exact class names so the
+   Adwaita-matching look (and the GTK4 desktop shell's dark-mode
+   handling, driven by color-scheme below) carries over unchanged. */
 
-export interface UserNav {
-  /** Signed-in user; absent in legacy single-user mode (no users registered). */
-  current?: string;
-  others: { name: string; hasPassword: boolean }[];
-  /** Desktop install: one implicit user, so no account controls at all. */
-  desktop?: boolean;
-}
-
-/** Opens the operation log, which stays closed until asked for. Rendered as
- * already running when the server knows an operation is in flight for this
- * user — otherwise the indicator would stay dark for an operation that was
- * triggered without a click on this page (e.g. an auto-sync after connecting
- * an Audible account), since nothing on the client would ever have mutated
- * `#progress-panel` to notice it. */
-function logToggle(running: boolean): string {
-  return `<button id="log-toggle" class="btn btn-sm btn-ghost" type="button"
-      aria-expanded="false" aria-controls="log-float" title="Show the operation log">
-      Log <span id="log-indicator" class="log-dot${running ? " running" : ""}"${running ? "" : " hidden"}></span>
-    </button>`;
-}
-
-function topbar(userNav: UserNav, extra: string, running: boolean): string {
-  const center = extra ? `<div class="topbar-center">${extra}</div>` : "";
-
-  // Desktop install: no accounts to switch between, but Settings still holds
-  // the Audible connection and activation bytes.
-  if (userNav.desktop) {
-    return `<header class="topbar">
-    <span class="topbar-title">Audible Backup</span>
-    ${center}
-    <div class="topbar-actions">
-      ${logToggle(running)}
-      <button class="btn btn-sm btn-ghost" type="button"
-        hx-post="/open-output" hx-swap="none"
-        title="Show the finished audiobooks in your file manager">Open folder</button>
-      <a class="btn btn-sm btn-ghost" href="/user/settings">Settings</a>
-    </div>
-  </header>`;
-  }
-
-  // Legacy single-user mode: no session to show, but users must still be able
-  // to find the sign-in / add-user flow.
-  if (!userNav.current) {
-    return `<header class="topbar">
-    <span class="topbar-title">Audible Backup</span>
-    ${center}
-    <div class="topbar-actions">
-      ${logToggle(running)}
-      <a class="btn btn-sm btn-ghost" href="/login">Sign in / Add user</a>
-    </div>
-  </header>`;
-  }
-
-  const items = [
-    ...userNav.others.map((u) => {
-      const name = escapeHtml(u.name);
-      if (u.hasPassword) {
-        return `<a class="dropdown-item" href="/login?user=${encodeURIComponent(u.name)}">Switch to ${name}</a>`;
-      }
-      return `<form method="post" action="/user/switch"><input type="hidden" name="name" value="${name}"><button class="dropdown-item" type="submit">Switch to ${name}</button></form>`;
-    }),
-    `<a class="dropdown-item" href="/user/settings">Settings</a>`,
-    `<a class="dropdown-item" href="/login">Add user&hellip;</a>`,
-    `<form method="post" action="/user/logout"><button class="dropdown-item" type="submit">Sign out</button></form>`,
-  ].join("");
-
-  return `<header class="topbar">
-    <span class="topbar-title">Audible Backup</span>
-    ${center}
-    <div class="topbar-actions">
-      ${logToggle(running)}
-      <div class="action-dropdown">
-        <button class="btn btn-sm btn-ghost" type="button" data-dropdown-toggle aria-haspopup="true" aria-expanded="false">${escapeHtml(userNav.current)} &#9662;</button>
-        <div class="dropdown-menu">${items}</div>
-      </div>
-    </div>
-  </header>`;
-}
-
-export function layout(
-  title: string,
-  content: string,
-  userNav?: UserNav,
-  topbarExtra?: string,
-  operationRunning: boolean = false,
-): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title} - Audible Backup</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M3 5c0 0 4-2 13 2v22c-9-4-13-2-13-2V5z' fill='%236c8cff'/><path d='M29 5c0 0-4-2-13 2v22c9-4 13-2 13-2V5z' fill='%238ba4ff'/></svg>">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/sse.js"></script>
-  <script src="/static/app.js" defer></script>
-  <style>
     /* Adwaita named colors (see libadwaita's colors.md): light by default,
        overridden under prefers-color-scheme so the page follows the system
        the same way a native GNOME app would. */
@@ -305,6 +211,12 @@ export function layout(
       text-overflow: ellipsis;
     }
     .table-scroll {
+      /* position + z-index (not just position) is what creates a new
+         stacking context — needed so the sticky header's z-index:1 below
+         stays scoped to this container instead of competing globally with
+         portaled overlays (Menu/Popover popups) elsewhere on the page. */
+      position: relative;
+      z-index: 0;
       flex: 1;
       overflow-y: auto;
       min-height: 0;
@@ -399,8 +311,13 @@ export function layout(
        would clip a menu opened on one of the last rows. Coordinates are set by
        app.js when the menu opens. */
     .dropdown-menu {
+      /* No position here: Menu.Positioner (its parent) already handles
+         positioning via floating-ui's own absolute + transform — a
+         position:fixed popup would be hijacked by the Positioner's
+         transform (a transformed ancestor becomes the containing block for
+         a position:fixed descendant), which breaks flip/shift collision
+         math into computing against the wrong box. */
       display: none;
-      position: fixed;
       z-index: 200;
       min-width: 140px;
       background: var(--surface);
@@ -410,7 +327,11 @@ export function layout(
       margin-top: 2px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
-    .action-dropdown.open .dropdown-menu { display: block; }
+    /* Base UI (Menu.Popup / Popover.Popup, both styled via this class)
+       toggles its own [data-open] attribute rather than relying on a
+       manually-toggled ancestor class the way the old vanilla-JS dropdowns
+       did — .action-dropdown.open never existed for these. */
+    .dropdown-menu[data-open] { display: block; }
     .dropdown-item {
       display: block;
       width: 100%;
@@ -449,6 +370,27 @@ export function layout(
     .btn-icon[data-cancel]:hover .icon-cancel { display: block; color: var(--danger); }
     .dropdown-item.checkbox-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
     .dropdown-item.checkbox-item input { margin: 0; }
+    /* Menu.CheckboxItem (the Columns menu) has no native input — Base UI
+       toggles [data-checked] on the item itself instead, so the check mark
+       has to come from CSS. FacetedFilter's plain <input type=checkbox>
+       items keep their own native box via the rule above. */
+    .dropdown-item.checkbox-item[role="menuitemcheckbox"]::before {
+      content: "";
+      width: 0.9rem;
+      height: 0.9rem;
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--bg);
+    }
+    .dropdown-item.checkbox-item[data-checked]::before {
+      background: var(--accent);
+      border-color: var(--accent);
+      background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M13.5 4.5l-7 7L3 8' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+      background-size: 0.7rem;
+      background-repeat: no-repeat;
+      background-position: center;
+    }
     .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
     .settings-header h1 { margin-bottom: 0; }
     body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
@@ -471,21 +413,141 @@ export function layout(
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
     .toast.error { border-left-color: var(--danger); }
-  </style>
-</head>
-<body${userNav ? ' class="has-topbar"' : ""}>
-  ${userNav ? topbar(userNav, topbarExtra || "", operationRunning) : ""}
-  <main>${content}</main>
-  <div id="toast-region" role="status" aria-live="polite"></div>
-  <div id="log-float" role="region" aria-label="Operation log">
-    <div id="log-float-header">
-      <span id="log-float-title">Operation Log</span>
-      <div>
-        <button id="log-float-close" title="Close" aria-label="Close operation log">&times;</button>
-      </div>
-    </div>
-    <div id="progress-panel"></div>
-  </div>
-</body>
-</html>`;
+
+    .auth-wrap { max-width: 420px; margin: 3rem auto; }
+    .settings-wrap { width: 100%; margin: 0.5rem 0 3rem; }
+    .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+    .tab {
+      background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 0.6rem 1rem; font-size: 0.9rem; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; transition: color 0.15s, border-color 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .tab-panel[hidden] { display: none; }
+    .auth-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .auth-card h2 { margin-bottom: 1rem; }
+    .auth-card form, .auth-card .field-stack { display: flex; flex-direction: column; gap: 0.6rem; }
+    .auth-card .user-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+    .auth-card .user-row form { flex-direction: row; flex: 1; }
+    .auth-card .user-row input[type=password] { flex: 1; }
+    .auth-card input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; outline: none; }
+    .auth-card input:focus { border-color: var(--accent); }
+    .auth-card input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--surface2); }
+    .auth-card label { font-size: 0.8rem; color: var(--text-muted); }
+    .auth-card .hint { font-size: 0.75rem; color: var(--text-muted); }
+    .auth-error { color: var(--danger); margin-bottom: 1rem; font-size: 0.9rem; }
+    .auth-card .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
+    .auth-card .checkbox-row input { width: auto; }
+    .auth-card .checkbox-row label { font-size: 0.85rem; color: var(--text); }
+    .auth-card select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+    .auth-card .steps { margin: 0 0 0.75rem 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+    .auth-card .steps li { list-style: decimal; }
+    .auth-card a { color: var(--accent); }
+    .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
+    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .build-line { margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
+    .btn-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .quality-section label:not(:first-child) { margin-top: 0.4rem; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.4rem; }
+    .setting-row label { margin: 0; }
+    /* Sliding toggle: a real checkbox, visually hidden, driving a track+thumb
+       sibling via :checked — stays a native, keyboard- and screen-reader-
+       accessible control, just repainted. */
+    /* Switch.Root (Base UI) renders as a single <span role="switch"> with no
+       separate "track" element of its own — the root's box IS the track,
+       styled directly, with Switch.Thumb as the moving dot. State comes via
+       Base UI's [data-checked]/[data-unchecked] attributes rather than a
+       real checkbox's :checked (Switch.Root does render a visually-hidden
+       native input internally, for forms, but it isn't a CSS sibling of
+       anything here). */
+    .switch-root {
+      position: relative; display: inline-flex; align-items: center; flex-shrink: 0;
+      width: 2.25rem; height: 1.25rem; border: none; padding: 0; cursor: pointer;
+      background: var(--border); border-radius: 999px; transition: background 0.15s;
+    }
+    .switch-root[data-checked] { background: var(--accent); }
+    .switch-root:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .switch-thumb {
+      position: absolute; top: 2px; left: 2px; width: 1.05rem; height: 1.05rem;
+      background: #fff; border-radius: 50%; transition: transform 0.15s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+    .switch-root[data-checked] .switch-thumb { transform: translateX(1rem); }
+    .format-section { margin-top: 0.6rem; }
+    .format-section label { display: block; margin-bottom: 0.3rem; }
+    #directory-rows, #filename-row { display: flex; flex-direction: column; gap: 0.4rem; }
+    .format-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.4rem 0.5rem;
+    }
+    .format-row-main { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; }
+    .format-row-grip { cursor: grab; color: var(--text-muted); font-size: 0.9rem; user-select: none; line-height: 1; }
+    .format-row-grip:active { cursor: grabbing; }
+    .format-blocks {
+      display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1; min-width: 0; min-height: 1.6rem; align-items: center;
+      background: var(--surface); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 0.25rem 0.4rem;
+    }
+    .format-chip {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.15rem 0.4rem; font-size: 0.8rem; cursor: grab;
+    }
+    .format-chip:active { cursor: grabbing; }
+    .format-chip.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+    .format-chip-label { white-space: nowrap; }
+    .format-chip-text .chip-text-input {
+      background: transparent; border: none; padding: 0; font-size: 0.8rem;
+      color: var(--text); outline: none; width: auto;
+    }
+    .chip-remove {
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 0.85rem; line-height: 1; padding: 0;
+    }
+    .chip-remove:hover { color: var(--danger); }
+    .format-row-controls {
+      display: flex; align-items: center; gap: 0.3rem; flex-shrink: 0;
+      margin-left: auto; padding-left: 0.5rem; border-left: 1px solid var(--border);
+    }
+    .format-add-tag { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.8rem; padding: 0.25rem 0.4rem; }
+    .format-preview {
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 0.85rem; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.6rem 0.75rem; word-break: break-word;
+    }
+    .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+    .danger-zone h2 { color: var(--danger); }
+
+/* --- Additions for the React client: Base UI structural elements and new
+   controls (column filter popovers, confirm dialog) that the ported CSS
+   above has no rules for yet. --- */
+
+.th-inner { cursor: inherit; display: inline-block; }
+.th-filter-btn {
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  font-size: 0.65rem; margin-left: 0.25rem; padding: 0 0.15rem; vertical-align: middle;
 }
+.th-filter-btn:hover, .th-filter-btn.active { color: var(--accent); }
+
+.column-filter-popup { min-width: 200px; max-width: 280px; padding: 0.5rem; }
+.column-filter-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; }
+.column-filter-range { display: flex; flex-direction: column; gap: 0.5rem; }
+.column-filter-range label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--text-muted); }
+.column-filter-range input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+.column-filter-text {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 0.35rem 0.5rem; font-size: 0.85rem; width: 100%;
+}
+
+.confirm-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 300; }
+.confirm-popup {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 301; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1.25rem; width: min(400px, calc(100vw - 2rem));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* Popover/Menu positioners are portaled, unstyled wrappers — only the popup
+   inside needs presentation, reusing .dropdown-menu from the ported CSS. */
