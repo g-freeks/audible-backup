@@ -52,7 +52,7 @@ export function RowActions({ book, actions }: { book: Book; actions: BookActions
       );
       break;
     case "converted":
-      primaryLabel = "Download";
+      primaryLabel = "Download ZIP";
       primaryHref = `/download/converted/${asin}`;
       items.push(
         { label: "Convert again", onClick: () => actions.reconvert(asin) },

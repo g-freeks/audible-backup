@@ -19,6 +19,7 @@ import { ColumnFilter } from "./ColumnFilter.tsx";
 import { RowActions, type BookActions } from "./RowActions.tsx";
 import { StatusCell } from "../components/StatusBadge.tsx";
 import { useOperationContext } from "../OperationContext.tsx";
+import { languageFlag } from "../lang-flags.ts";
 
 type BooksTableInstance = Table<typeof features, Book>;
 
@@ -198,6 +199,14 @@ export function BooksTable({ table, actions }: { table: BooksTableInstance; acti
                     return (
                       <td key={cell.id}>
                         <code>{book.asin}</code>
+                      </td>
+                    );
+                  }
+                  if (cell.column.id === "language") {
+                    const flag = languageFlag(book.language);
+                    return (
+                      <td key={cell.id} title={book.language || ""}>
+                        {flag ? <span className="lang-flag" aria-label={book.language || ""}>{flag}</span> : book.language}
                       </td>
                     );
                   }

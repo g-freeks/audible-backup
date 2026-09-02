@@ -551,3 +551,20 @@
 
 /* Popover/Menu positioners are portaled, unstyled wrappers — only the popup
    inside needs presentation, reusing .dropdown-menu from the ported CSS. */
+
+/* Status column: an icon-only badge instead of a text pill, so long labels
+   ("Not Downloadable") can't wrap the row. */
+.status-cell { display: inline-flex; align-items: center; gap: 0.35rem; }
+.badge-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem; padding: 0; border-radius: 50%; flex-shrink: 0;
+}
+.badge-icon svg { width: 1rem; height: 1rem; display: block; }
+.badge-icon svg.spin { animation: spin 1s linear infinite; }
+.status-suffix { font-size: 0.75rem; color: var(--text-muted); }
+
+/* Language column: a flag emoji instead of the raw Audible language name,
+   for the same reason — short and fixed-width regardless of how long the
+   language's name is. Languages this app has no flag for fall back to the
+   plain text rather than showing nothing. */
+.lang-flag { font-size: 1.1rem; line-height: 1; }
