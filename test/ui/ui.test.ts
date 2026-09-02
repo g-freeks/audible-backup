@@ -689,12 +689,14 @@ describe("one-click Download", () => {
     await ui?.close();
   });
 
-  it("labels every row action Download", async () => {
+  it("labels every row action Download, except the finished ZIP which says Download ZIP", async () => {
     const labels = await ui.page.locator("#books-table .split-main").allInnerTexts();
     assert.ok(labels.length >= 3, "expected several rows");
     for (const label of labels) {
-      assert.match(label.trim(), /^Download$/, `unexpected primary label: ${label}`);
+      assert.match(label.trim(), /^Download( ZIP)?$/, `unexpected primary label: ${label}`);
     }
+    const zipRow = ui.page.locator("#books-table tbody tr", { hasText: "Dune" });
+    assert.equal((await zipRow.locator(".split-main").innerText()).trim(), "Download ZIP");
   });
 
   it("downloads immediately for a book already converted", async () => {
