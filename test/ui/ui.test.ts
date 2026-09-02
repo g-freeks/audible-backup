@@ -799,6 +799,38 @@ describe("per-column filtering", () => {
   });
 });
 
+describe("page fills the viewport without a second scrollbar", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi(seedManyBooks);
+    // Narrow enough that the topbar's search box, buttons and Columns menu
+    // wrap onto a second line — the case that broke a fixed-rem height
+    // calculation the library layout used to rely on.
+    await ui.page.setViewportSize({ width: 800, height: 600 });
+    await ui.page.goto(ui.baseUrl, { waitUntil: "networkidle" });
+    await ui.page.waitForSelector("#books-table tbody tr");
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  it("keeps the outer page from scrolling even when the topbar wraps to two lines", async () => {
+    const measured = await ui.page.evaluate(() => {
+      const table = document.querySelector(".table-scroll")!;
+      return {
+        docOverflows: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+        tableOverflows: table.scrollHeight > table.clientHeight,
+        topbarWrapped: (document.querySelector(".topbar-center") as HTMLElement).getBoundingClientRect().height > 40,
+      };
+    });
+    assert.equal(measured.docOverflows, false, "the page itself must not need its own scrollbar");
+    assert.equal(measured.tableOverflows, true, "the table pane should still scroll internally");
+    assert.ok(measured.topbarWrapped, "the topbar should have wrapped at this width for the test to be meaningful");
+  });
+});
+
 describe("table layout", () => {
   let ui: UiContext;
 
