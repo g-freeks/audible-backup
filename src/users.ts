@@ -20,6 +20,18 @@ export interface ColumnPrefs {
   order: string[];
 }
 
+/**
+ * The books table's full client-side state — sorting, per-column filters,
+ * visibility, order, sizing, row selection — as one opaque snapshot. Stored
+ * as a plain JSON blob rather than a typed shape: it mirrors whatever the
+ * table library's own state object looks like, which this server has no
+ * reason to know in detail. Supersedes ColumnPrefs, kept only for the
+ * server-rendered UI's /api/column-prefs until that route is retired.
+ */
+export interface TableState {
+  [key: string]: unknown;
+}
+
 export interface User {
   name: string;
   passwordHash?: string;
@@ -30,6 +42,9 @@ export interface User {
    * every launch, so localStorage (scoped to that origin) would reset every
    * restart. */
   columnPrefs?: ColumnPrefs;
+  /** The books table's full state (sorting/filters/visibility/order/sizing/
+   * selection) for the React client — see TableState. */
+  tableState?: TableState;
   /** Output format/quality for conversions. Unset means the converter's
    * own default (mp3, medium). */
   audioSettings?: AudioSettings;
@@ -204,6 +219,14 @@ export function setColumnPrefs(name: string, prefs: ColumnPrefs): void {
   const user = users.find((u) => u.name === name);
   if (!user) throw new Error(`Unknown user: ${name}`);
   user.columnPrefs = prefs;
+  saveUsers(users);
+}
+
+export function setTableState(name: string, state: TableState): void {
+  const users = listUsers();
+  const user = users.find((u) => u.name === name);
+  if (!user) throw new Error(`Unknown user: ${name}`);
+  user.tableState = state;
   saveUsers(users);
 }
 

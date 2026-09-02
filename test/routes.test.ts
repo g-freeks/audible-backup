@@ -1823,6 +1823,95 @@ describe("POST /api/column-prefs", () => {
   });
 });
 
+describe("GET/POST /api/table-state", () => {
+  async function signedIn(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("returns {} when nothing has been saved", async () => {
+    const cookie = await signedIn("frank");
+    const res = await app.request("/api/table-state", { headers: { cookie } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {});
+  });
+
+  it("saves and reads back an arbitrary state snapshot", async () => {
+    const cookie = await signedIn("grace");
+    const state = {
+      sorting: [{ id: "title", desc: false }],
+      columnFilters: [{ id: "status", value: ["converted"] }],
+      columnVisibility: { asin: false },
+      columnOrder: ["title", "author"],
+      columnSizing: { title: 240 },
+      rowSelection: { B000000001: true },
+    };
+    const post = await app.request("/api/table-state", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    });
+    assert.equal(post.status, 204);
+
+    const get = await app.request("/api/table-state", { headers: { cookie } });
+    assert.deepEqual(await get.json(), state);
+  });
+
+  it("no-ops in legacy mode (no signed-in user to attach it to)", async () => {
+    const res = await app.request("/api/table-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sorting: [] }),
+    });
+    assert.equal(res.status, 204);
+  });
+
+  it("rejects invalid JSON and non-object bodies", async () => {
+    const cookie = await signedIn("heidi");
+    const badJson = await app.request("/api/table-state", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: "not json",
+    });
+    assert.equal(badJson.status, 400);
+
+    const arrayBody = await app.request("/api/table-state", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify([1, 2, 3]),
+    });
+    assert.equal(arrayBody.status, 400);
+  });
+
+  it("rejects an oversized payload", async () => {
+    const cookie = await signedIn("ivan");
+    const res = await app.request("/api/table-state", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ blob: "x".repeat(100_000) }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("keeps each user's saved state separate", async () => {
+    const alice = await signedIn("judy");
+    const bob = await signedIn("kevin");
+
+    await app.request("/api/table-state", {
+      method: "POST",
+      headers: { cookie: alice, "Content-Type": "application/json" },
+      body: JSON.stringify({ sorting: [{ id: "title", desc: true }] }),
+    });
+
+    const bobState = await (await app.request("/api/table-state", { headers: { cookie: bob } })).json();
+    assert.deepEqual(bobState, {}, "a different user sees no saved state");
+  });
+});
+
 describe("POST /user/reset-db", () => {
   async function signedIn(name: string): Promise<string> {
     const res = await app.request("/user/add", {

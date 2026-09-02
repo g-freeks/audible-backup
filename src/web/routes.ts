@@ -61,6 +61,8 @@ import {
   setColumnPrefs,
   setAudioSettings,
   setOutputFormat,
+  setTableState,
+  type TableState,
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
@@ -805,6 +807,42 @@ routes.post("/api/column-prefs", async (c) => {
     hidden: strings(record?.hidden),
     order: strings(record?.order),
   });
+  return c.body(null, 204);
+});
+
+// --- Table state (sorting/filters/visibility/order/sizing/selection) ---
+// Supersedes column-prefs above for the React client: one opaque JSON
+// snapshot of the table library's own state, rather than two fixed arrays.
+// Saved per account for the same reason column-prefs is: the desktop app
+// binds to a fresh OS-assigned port every launch, so browser storage alone
+// would reset on every restart.
+
+const MAX_TABLE_STATE_BYTES = 64_000;
+
+routes.get("/api/table-state", (c) => {
+  const user = currentUser();
+  if (!user) return c.json({}); // legacy mode: nothing saved
+  return c.json(user.tableState || {});
+});
+
+routes.post("/api/table-state", async (c) => {
+  const user = currentUser();
+  if (!user) return c.body(null, 204); // legacy mode: nothing to attach this to
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Expected a JSON object" }, 400);
+  }
+  if (JSON.stringify(body).length > MAX_TABLE_STATE_BYTES) {
+    return c.json({ error: "Table state payload too large" }, 400);
+  }
+
+  setTableState(user.name, body as TableState);
   return c.body(null, 204);
 });
 
