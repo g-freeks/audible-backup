@@ -597,6 +597,34 @@
     renderFormatPreview();
   }
 
+  // ---- Settings: tabs ----
+  // Which tab was open is remembered per-browser so a full-page reload (e.g.
+  // after Save, which is a plain form POST) lands back where the user was.
+  var SETTINGS_TAB_KEY = "audible-backup:settings-tab";
+
+  function activateSettingsTab(name) {
+    var target = document.querySelector('.tab[data-tab="' + name + '"]');
+    if (!target) return;
+    document.querySelectorAll(".tab").forEach(function (btn) {
+      var active = btn === target;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", String(active));
+    });
+    document.querySelectorAll(".tab-panel").forEach(function (panel) {
+      panel.hidden = panel.dataset.tabPanel !== name;
+    });
+    try { localStorage.setItem(SETTINGS_TAB_KEY, name); } catch (e) {}
+  }
+
+  function initSettingsTabs() {
+    var tabs = document.querySelectorAll(".tab");
+    if (!tabs.length) return;
+    var stored = null;
+    try { stored = localStorage.getItem(SETTINGS_TAB_KEY); } catch (e) {}
+    var initial = stored && document.querySelector('.tab[data-tab="' + stored + '"]') ? stored : tabs[0].dataset.tab;
+    activateSettingsTab(initial);
+  }
+
   // ---- Delegated events ----
   // Capture phase: a button turned into "Cancel" still carries its original
   // hx-post, so stop the event before htmx's own listener sees it.
@@ -637,6 +665,12 @@
         toggle.setAttribute("aria-expanded", "true");
         positionMenu(dd, toggle);
       }
+      return;
+    }
+
+    var tabBtn = e.target.closest(".tab");
+    if (tabBtn) {
+      activateSettingsTab(tabBtn.dataset.tab);
       return;
     }
 
@@ -927,4 +961,5 @@
   // just parse its state and paint the (JS-only) live preview from it.
   loadOutputFormatState();
   renderFormatPreview();
+  initSettingsTabs();
 })();

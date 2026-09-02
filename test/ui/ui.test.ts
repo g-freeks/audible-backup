@@ -495,7 +495,7 @@ describe("Audible sign-in from the settings page", () => {
     );
 
     const settings = await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
-    const body = await ui.page.locator(".auth-wrap").innerText();
+    const body = await ui.page.locator(".settings-wrap").innerText();
     assert.match(body, /Connected/);
     assert.ok(settings?.ok());
     assert.deepEqual(
@@ -515,6 +515,7 @@ describe("conversion quality settings", () => {
     await ui.page.click('form[action="/user/add"] button[type=submit]');
     await ui.page.waitForLoadState("networkidle");
     await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+    await ui.page.click('[data-tab="output"]');
   });
 
   after(async () => {
@@ -589,6 +590,7 @@ describe("output naming builder", () => {
     await ui.page.click('form[action="/user/add"] button[type=submit]');
     await ui.page.waitForLoadState("networkidle");
     await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+    await ui.page.click('[data-tab="output"]');
   });
 
   after(async () => {
@@ -905,6 +907,7 @@ describe("reset database from settings", () => {
     await ui.page.click('form[action="/user/add"] button[type=submit]');
     await ui.page.waitForLoadState("networkidle");
     await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+    await ui.page.click('[data-tab="debug"]');
   });
 
   after(async () => {
@@ -915,7 +918,7 @@ describe("reset database from settings", () => {
     ui.page.once("dialog", (d) => d.dismiss());
     await ui.page.click('form[action="/user/reset-db"] button');
     await ui.page.waitForTimeout(300);
-    const body = await ui.page.locator(".auth-wrap").innerText();
+    const body = await ui.page.locator(".settings-wrap").innerText();
     assert.ok(!/database reset/i.test(body), "reset must not run when cancelled");
   });
 
@@ -926,7 +929,7 @@ describe("reset database from settings", () => {
     });
     await ui.page.click('form[action="/user/reset-db"] button');
     await ui.page.waitForLoadState("networkidle");
-    const body = await ui.page.locator(".auth-wrap").innerText();
+    const body = await ui.page.locator(".settings-wrap").innerText();
     assert.match(body, /database reset/i);
   });
 });

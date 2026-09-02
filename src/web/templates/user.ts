@@ -31,9 +31,19 @@ const ACTIVATION_BYTES_HINT =
 const formStyles = `
   <style>
     .auth-wrap { max-width: 420px; margin: 3rem auto; }
+    .settings-wrap { width: 100%; margin: 0.5rem 0 3rem; }
+    .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+    .tab {
+      background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 0.6rem 1rem; font-size: 0.9rem; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; transition: color 0.15s, border-color 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .tab-panel[hidden] { display: none; }
     .auth-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
     .auth-card h2 { margin-bottom: 1rem; }
-    .auth-card form { display: flex; flex-direction: column; gap: 0.6rem; }
+    .auth-card form, .auth-card .field-stack { display: flex; flex-direction: column; gap: 0.6rem; }
     .auth-card .user-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
     .auth-card .user-row form { flex-direction: row; flex: 1; }
     .auth-card .user-row input[type=password] { flex: 1; }
@@ -414,45 +424,63 @@ export function settingsPage(view: SettingsView): string {
   const { userName, activationBytes, hasPassword, message, error, userNav, desktop, operationRunning } = view;
   const content = `
     ${formStyles}
-    <div class="auth-wrap">
+    <div class="settings-wrap">
       <div class="settings-header">
         <h1>${desktop ? "Settings" : `Settings — ${escapeHtml(userName)}`}</h1>
         <a href="/" class="btn btn-ghost btn-sm">&larr; Back to library</a>
       </div>
       ${message ? `<div class="auth-error" style="color:var(--success)">${escapeHtml(message)}</div>` : ""}
       ${error ? `<div class="auth-error">${escapeHtml(error)}</div>` : ""}
-      ${audibleCard(view.audible)}
-      <div class="auth-card">
-        <form method="post" action="/user/settings">
-          <label for="set-bytes" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">Audible activation bytes</label>
-          <input id="set-bytes" name="activation_bytes" value="${escapeHtml(activationBytes)}" placeholder="e.g. 1a2b3c4d" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">
-          ${desktop ? "" : `
-          <label for="set-password">New password <span class="hint">(leave blank to keep ${hasPassword ? "current password" : "no password"})</span></label>
-          <input id="set-password" name="password" type="password" autocomplete="new-password">`}
-          ${!desktop && hasPassword ? `
-          <div class="checkbox-row">
-            <input id="set-remove-pw" name="remove_password" type="checkbox" value="true">
-            <label for="set-remove-pw">Remove password</label>
-          </div>` : ""}
 
-          <h2 style="margin-top:1rem">Conversion quality</h2>
-          ${qualitySection(view.audioSettings)}
-
-          <h2 style="margin-top:1rem">Output naming</h2>
-          ${outputFormatSection(view.outputFormat)}
-
-          <button class="btn btn-primary" type="submit">Save</button>
-        </form>
+      <div class="tabs" role="tablist" aria-label="Settings sections">
+        <button type="button" class="tab active" role="tab" data-tab="audible" id="tab-audible" aria-controls="tab-panel-audible" aria-selected="true">Audible</button>
+        <button type="button" class="tab" role="tab" data-tab="output" id="tab-output" aria-controls="tab-panel-output" aria-selected="false">Output</button>
+        <button type="button" class="tab" role="tab" data-tab="debug" id="tab-debug" aria-controls="tab-panel-debug" aria-selected="false">Debug</button>
       </div>
-      <div class="auth-card danger-zone">
-        <h2>Reset library database</h2>
-        <p class="hint">Clears this user's library list — every book, its
-        download and conversion state. <strong>Files on disk are kept</strong>;
-        a later sync re-imports whatever is still there.</p>
-        <form method="post" action="/user/reset-db"
-              data-confirm="Reset the library database for this user? Downloaded files are kept, but the library list is cleared.">
-          <button class="btn btn-danger" type="submit">Reset database</button>
-        </form>
+
+      <div class="tab-panel" id="tab-panel-audible" data-tab-panel="audible" role="tabpanel" aria-labelledby="tab-audible">
+        ${audibleCard(view.audible)}
+        <div class="auth-card">
+          <div class="field-stack">
+            <label for="set-bytes" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">Audible activation bytes</label>
+            <input id="set-bytes" name="activation_bytes" form="settings-form" value="${escapeHtml(activationBytes)}" placeholder="e.g. 1a2b3c4d" title="${escapeHtml(ACTIVATION_BYTES_HINT)}">
+            ${desktop ? "" : `
+            <label for="set-password">New password <span class="hint">(leave blank to keep ${hasPassword ? "current password" : "no password"})</span></label>
+            <input id="set-password" name="password" type="password" form="settings-form" autocomplete="new-password">`}
+            ${!desktop && hasPassword ? `
+            <div class="checkbox-row">
+              <input id="set-remove-pw" name="remove_password" type="checkbox" value="true" form="settings-form">
+              <label for="set-remove-pw">Remove password</label>
+            </div>` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-panel-output" data-tab-panel="output" role="tabpanel" aria-labelledby="tab-output" hidden>
+        <div class="auth-card">
+          <form id="settings-form" method="post" action="/user/settings">
+            <h2>Conversion quality</h2>
+            ${qualitySection(view.audioSettings)}
+
+            <h2 style="margin-top:1.5rem">Output naming</h2>
+            ${outputFormatSection(view.outputFormat)}
+
+            <button class="btn btn-primary" style="margin-top:1rem" type="submit">Save</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-panel-debug" data-tab-panel="debug" role="tabpanel" aria-labelledby="tab-debug" hidden>
+        <div class="auth-card danger-zone">
+          <h2>Reset library database</h2>
+          <p class="hint">Clears this user's library list — every book, its
+          download and conversion state. <strong>Files on disk are kept</strong>;
+          a later sync re-imports whatever is still there.</p>
+          <form method="post" action="/user/reset-db"
+                data-confirm="Reset the library database for this user? Downloaded files are kept, but the library list is cleared.">
+            <button class="btn btn-danger" type="submit">Reset database</button>
+          </form>
+        </div>
       </div>
 
       <p class="build-line" title="Which build is running — useful after an update">
