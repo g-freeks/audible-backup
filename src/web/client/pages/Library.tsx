@@ -175,14 +175,14 @@ export function LibraryPage() {
   );
 
   return (
-    <>
+    <div className="page-shell">
       <Topbar center={center} />
       <main>
         <div className="library-layout">
           {loaded && <BooksTable table={table} actions={actions} />}
         </div>
       </main>
-    </>
+    </div>
   );
 }
 

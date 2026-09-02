@@ -195,10 +195,29 @@
     .htmx-request .htmx-indicator { display: inline-block; }
     .spinner { width: 1em; height: 1em; border: 2px solid var(--text-muted); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Fills whatever height .page-shell's flex layout gives main (viewport
+       minus the topbar's actual rendered height) rather than guessing that
+       height with a fixed 100vh subtraction — the old fixed-rem calc didn't
+       account for the topbar wrapping onto two lines in a narrower window
+       (as happens in the Flatpak shell), which let the page grow past the
+       viewport and produced a second, outer scrollbar alongside this pane's
+       own .table-scroll one. */
+    .page-shell {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .page-shell > main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
     .library-layout {
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 4rem);
+      flex: 1;
+      min-height: 0;
     }
     /* A long value must not stretch its column and squeeze everything else
        (more of a risk now that the table has many metadata columns); the
@@ -283,7 +302,7 @@
     .search-wrap input:focus { border-color: var(--accent); }
     th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { color: var(--text); }
-    th.sortable::after { content: '⇅'; display: inline-block; margin-left: 0.3rem; font-size: 0.6rem; vertical-align: middle; opacity: 0.3; }
+    th.sortable::after { content: '⇅'; display: inline-block; margin-left: 0.3rem; font-size: 0.8rem; vertical-align: middle; opacity: 0.3; }
     th.sortable:hover::after { opacity: 0.6; }
     th.sortable.asc::after { content: '▲'; opacity: 1; }
     th.sortable.desc::after { content: '▼'; opacity: 1; }
@@ -393,7 +412,6 @@
     }
     .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
     .settings-header h1 { margin-bottom: 0; }
-    body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
     #toast-region {
       position: fixed;
       top: 1rem;
@@ -527,7 +545,7 @@
 .th-inner { cursor: inherit; display: inline-block; }
 .th-filter-btn {
   background: none; border: none; color: var(--text-muted); cursor: pointer;
-  font-size: 0.65rem; margin-left: 0.25rem; padding: 0 0.15rem; vertical-align: middle;
+  font-size: 0.9rem; margin-left: 0.25rem; padding: 0 0.15rem; vertical-align: middle;
 }
 .th-filter-btn:hover, .th-filter-btn.active { color: var(--accent); }
 
