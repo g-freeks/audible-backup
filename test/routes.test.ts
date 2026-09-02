@@ -203,22 +203,100 @@ describe("GET /api/books", () => {
     assert.deepEqual(data, []);
   });
 
-  it("returns books", async () => {
+  it("returns books, with a derived status and no server filesystem paths", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     const res = await app.request("/api/books");
     const data = await res.json();
     assert.equal(data.length, 1);
     assert.equal(data[0].asin, "B000000001");
+    assert.equal(data[0].status, "downloaded");
+    assert.equal(data[0].chapterCount, null);
+    assert.equal(data[0].aax_path, undefined, "aax_path is a server filesystem path — must not leave the server");
   });
 
-  it("excludes ignored books", async () => {
+  it("includes ignored books, with status \"ignored\" (unlike the books page's default view)", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     markDownloaded("B000000002", "A2", "T2", "/b.aax");
     ignoreBook("B000000001");
     const res = await app.request("/api/books");
     const data = await res.json();
-    assert.equal(data.length, 1);
-    assert.equal(data[0].asin, "B000000002");
+    assert.equal(data.length, 2);
+    const ignored = data.find((b: { asin: string }) => b.asin === "B000000001");
+    assert.equal(ignored.status, "ignored");
+  });
+});
+
+function sessionCookie(res: Response): string {
+  const setCookie = res.headers.get("set-cookie") || "";
+  return setCookie.split(";")[0];
+}
+
+async function addUserAndLogin(app: Hono, name: string): Promise<string> {
+  const res = await app.request("/user/add", {
+    method: "POST",
+    body: new URLSearchParams({ name }),
+    redirect: "manual",
+  });
+  return sessionCookie(res);
+}
+
+describe("GET /api/session", () => {
+  it("reports legacy mode with no users registered", async () => {
+    const res = await app.request("/api/session");
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { desktop: false, current: null, others: [], legacy: true });
+  });
+
+  it("reports the signed-in user and the others available to switch to", async () => {
+    const alice = await addUserAndLogin(app, "alice");
+    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "bob" }) });
+
+    const res = await app.request("/api/session", { headers: { cookie: alice } });
+    const data = await res.json();
+    assert.equal(data.current, "alice");
+    assert.equal(data.legacy, false);
+    assert.deepEqual(data.others.map((u: { name: string }) => u.name), ["bob"]);
+  });
+});
+
+describe("GET /api/settings", () => {
+  it("requires a session (401, not a redirect a fetch would silently follow)", async () => {
+    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
+    const res = await app.request("/api/settings");
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "Unauthorized" });
+  });
+
+  it("returns the settings state for the signed-in user", async () => {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "alice", activation_bytes: "deadbeef" }),
+      redirect: "manual",
+    });
+    const cookie = sessionCookie(res);
+
+    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
+    assert.equal(settings.userName, "alice");
+    assert.equal(settings.activationBytes, "deadbeef");
+    assert.equal(settings.hasPassword, false);
+    assert.equal(settings.desktop, false);
+    assert.deepEqual(settings.audioSettings, { format: "mp3", quality: "medium" });
+    assert.ok(settings.outputFormat.directory);
+    assert.ok(settings.audible);
+    assert.ok(settings.version);
+  });
+});
+
+describe("GET /api/operation", () => {
+  it("reports not running when nothing is active", async () => {
+    const res = await app.request("/api/operation");
+    assert.deepEqual(await res.json(), { running: false });
+  });
+
+  it("reports the active operation's type", async () => {
+    startOperation("sync");
+    const res = await app.request("/api/operation");
+    assert.deepEqual(await res.json(), { running: true, type: "sync" });
   });
 });
 
@@ -245,12 +323,12 @@ describe("POST /api/ignore/:asin", () => {
     assert.ok(isIgnored("B099999999"));
   });
 
-  it("ignored book disappears from /api/books", async () => {
+  it("ignored book stays in /api/books with status \"ignored\"", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
 
     let res = await app.request("/api/books");
     let data = await res.json();
-    assert.equal(data.length, 1);
+    assert.equal(data[0].status, "downloaded");
 
     await app.request("/api/ignore/B000000001", {
       method: "POST",
@@ -259,7 +337,8 @@ describe("POST /api/ignore/:asin", () => {
 
     res = await app.request("/api/books");
     data = await res.json();
-    assert.equal(data.length, 0);
+    assert.equal(data.length, 1);
+    assert.equal(data[0].status, "ignored");
   });
 });
 
@@ -278,13 +357,14 @@ describe("POST /api/unignore/:asin", () => {
     assert.ok(!isIgnored("B000000001"));
   });
 
-  it("unignored book reappears in /api/books", async () => {
+  it("unignored book's status reverts from \"ignored\" in /api/books", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     ignoreBook("B000000001");
 
     let res = await app.request("/api/books");
     let data = await res.json();
-    assert.equal(data.length, 0);
+    assert.equal(data.length, 1);
+    assert.equal(data[0].status, "ignored");
 
     await app.request("/api/unignore/B000000001", {
       method: "POST",
@@ -295,6 +375,7 @@ describe("POST /api/unignore/:asin", () => {
     data = await res.json();
     assert.equal(data.length, 1);
     assert.equal(data[0].asin, "B000000001");
+    assert.equal(data[0].status, "downloaded");
   });
 
   it("unignore is a no-op for non-ignored ASIN", async () => {

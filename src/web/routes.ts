@@ -43,6 +43,8 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { secureHeaders } from "hono/secure-headers";
 import type { Context } from "hono";
 import { escapeHtml } from "./templates/html.ts";
+import { getBookStatus } from "./book-status.ts";
+import { versionLine } from "../version.ts";
 import { queuedSwap } from "./templates/components.ts";
 import {
   hasUsers,
@@ -67,6 +69,11 @@ import { ensureDesktopUser } from "../users.ts";
 
 export const routes = new Hono();
 
+/** API requests get a JSON error; page requests keep their HTML redirect. */
+function isApiPath(c: Context): boolean {
+  return c.req.path.startsWith("/api/");
+}
+
 // Desktop mode: require the per-launch token before anything else. The
 // launcher opens the app with ?token=..., which is then stored as a cookie.
 routes.use("*", async (c, next) => {
@@ -89,6 +96,7 @@ routes.use("*", async (c, next) => {
     return next();
   }
 
+  if (isApiPath(c)) return c.json({ error: "Forbidden" }, 403);
   return c.text("Forbidden", 403);
 });
 
@@ -133,7 +141,12 @@ routes.use("*", async (c, next) => {
 
   const userName = getSessionUser(getCookie(c, "session"));
   const user = userName ? getUser(userName) : undefined;
-  if (!user) return c.redirect("/login");
+  if (!user) {
+    // A SPA fetch would silently follow a 302 and receive the login page with
+    // status 200, so API paths get a real status code instead.
+    if (isApiPath(c)) return c.json({ error: "Unauthorized" }, 401);
+    return c.redirect("/login");
+  }
   return runWithUser(user.name, () => next());
 });
 
@@ -161,6 +174,32 @@ function requestPaths() {
     audioSettings: DEFAULT_AUDIO_SETTINGS,
     outputFormat: DEFAULT_OUTPUT_FORMAT,
   };
+}
+
+interface BookMeta {
+  convertibleAsins: Set<string>;
+  convertedAsins: Map<string, number>;
+}
+
+/** One filesystem pass covering both "which downloaded books are ready to
+ * convert" and "which are already converted, with how many chapters" — shared
+ * by the books page, the /api/books listing and /api/status so none of them
+ * re-scan the output directory on their own. */
+function computeBookMeta(paths: ReturnType<typeof requestPaths>): BookMeta {
+  let convertibleAsins = new Set<string>();
+  try {
+    const converter = new Converter(paths.targetDir, paths.outputDir, paths.activationBytes);
+    convertibleAsins = new Set(converter.findBookFiles().map((b) => b.asin));
+  } catch {
+    // activation bytes or target dir may not be configured
+  }
+  const convertedAsins = new Map<string, number>();
+  for (const book of getAllBooks()) {
+    if (!book.downloaded_at) continue;
+    const chapters = findConvertedChapters(paths.outputDir, book.asin, book.title || "", paths.outputFormat);
+    if (chapters.length > 0) convertedAsins.set(book.asin, chapters.length);
+  }
+  return { convertibleAsins, convertedAsins };
 }
 
 function buildUserNav(): UserNav {
@@ -282,6 +321,35 @@ async function renderSettings(
 }
 
 routes.get("/user/settings", (c) => renderSettings(c));
+
+// --- Session / settings state, as JSON (for the SPA) ---
+
+routes.get("/api/session", (c) => {
+  if (isDesktopMode()) return c.json({ desktop: true, current: null, others: [] });
+  const name = currentUserName();
+  if (!name) return c.json({ desktop: false, current: null, others: userListEntries(), legacy: !hasUsers() });
+  return c.json({
+    desktop: false,
+    current: name,
+    others: userListEntries().filter((u) => u.name !== name),
+    legacy: false,
+  });
+});
+
+routes.get("/api/settings", async (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  return c.json({
+    userName: user.name,
+    activationBytes: user.activationBytes || "",
+    hasPassword: userHasPassword(user),
+    audible: await audibleStatus(),
+    desktop: isDesktopMode(),
+    audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
+    outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
+    version: versionLine(),
+  });
+});
 
 // --- Audible sign-in (two steps; the password is entered on Audible's site) ---
 
@@ -475,23 +543,7 @@ routes.post("/user/settings", async (c) => {
 
 routes.get("/", (c) => {
   const paths = requestPaths();
-  let convertibleAsins = new Set<string>();
-  try {
-    const converter = new Converter(
-      paths.targetDir,
-      paths.outputDir,
-      paths.activationBytes,
-    );
-    convertibleAsins = new Set(converter.findBookFiles().map((b) => b.asin));
-  } catch {
-    // activation bytes or target dir may not be configured
-  }
-  const convertedAsins = new Map<string, number>();
-  for (const book of getAllBooks()) {
-    if (!book.downloaded_at) continue;
-    const chapters = findConvertedChapters(paths.outputDir, book.asin, book.title || "", paths.outputFormat);
-    if (chapters.length > 0) convertedAsins.set(book.asin, chapters.length);
-  }
+  const { convertibleAsins, convertedAsins } = computeBookMeta(paths);
   return c.html(booksPage(convertibleAsins, convertedAsins, buildUserNav(), {
     autoSync: c.req.query("sync") === "1",
     operationRunning: currentOperationRunning(),
@@ -531,14 +583,12 @@ routes.post("/api/column-prefs", async (c) => {
 
 routes.get("/api/status", (c) => {
   const paths = requestPaths();
+  const { convertedAsins } = computeBookMeta(paths);
   const all = getAllAudiobooks();
   const downloaded = getDownloadedAsins();
   let convertedCount = 0;
   for (const asin of downloaded) {
-    const book = getAudiobookByAsin(asin);
-    if (book && findConvertedChapters(paths.outputDir, asin, book.title || "", paths.outputFormat).length > 0) {
-      convertedCount++;
-    }
+    if (convertedAsins.has(asin)) convertedCount++;
   }
   return c.json({
     total: all.length,
@@ -548,8 +598,22 @@ routes.get("/api/status", (c) => {
   });
 });
 
+// Includes ignored books (unlike /api/status) and adds the derived `status`
+// and `chapterCount` fields the HTML table renders today — and drops
+// `aax_path`, an absolute server filesystem path with no business leaving
+// the server.
 routes.get("/api/books", (c) => {
-  return c.json(getAllAudiobooks());
+  const paths = requestPaths();
+  const { convertibleAsins, convertedAsins } = computeBookMeta(paths);
+  const books = getAllBooks().map((book) => {
+    const { aax_path, ...rest } = book;
+    return {
+      ...rest,
+      status: getBookStatus(book, convertibleAsins, convertedAsins),
+      chapterCount: convertedAsins.get(book.asin) ?? null,
+    };
+  });
+  return c.json(books);
 });
 
 // --- Ignore / Unignore ---
@@ -706,6 +770,17 @@ function currentOperationRunning(): boolean {
   const op = getActiveOperation();
   return !!op && !op.finished && ownsOperation(op);
 }
+
+// Lets the SPA know, on mount or after a reload, whether to re-attach to an
+// in-flight operation's stream — the job currentOperationRunning() does for
+// the topbar's log dot in the server-rendered page.
+routes.get("/api/operation", (c) => {
+  const op = getActiveOperation();
+  if (!op || op.finished || !ownsOperation(op)) {
+    return c.json({ running: false });
+  }
+  return c.json({ running: true, type: op.type });
+});
 
 routes.get("/library/sync/stream", (c) => {
   const op = getActiveOperation();

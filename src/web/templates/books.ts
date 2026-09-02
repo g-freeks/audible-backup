@@ -2,6 +2,7 @@ import { layout, type UserNav } from "./layout.ts";
 import { getAllBooks, type AudiobookRow } from "../../db.ts";
 import { escapeHtml } from "./html.ts";
 import { statusBadge } from "./components.ts";
+import { getBookStatus } from "../book-status.ts";
 
 function formatRuntime(minutes: number | null): string {
   if (!minutes) return "";
@@ -18,15 +19,6 @@ function formatDate(iso: string | null): string {
   // purchase_date) are already a plain ISO date or a full ISO timestamp
   // with their own "Z", so appending one more is harmless/ignored there.
   return new Date(iso.endsWith("Z") ? iso : `${iso}Z`).toLocaleDateString();
-}
-
-function getStatus(book: AudiobookRow, convertibleAsins: Set<string>, convertedAsins: Map<string, number>): string {
-  if (book.ignored_at) return "ignored";
-  if (book.not_downloadable_at) return "not-downloadable";
-  if (!book.downloaded_at) return "not-downloaded";
-  if (!convertedAsins.has(book.asin) && convertibleAsins.has(book.asin)) return "convertible";
-  if (!convertedAsins.has(book.asin)) return "downloaded";
-  return "converted";
 }
 
 /**
@@ -217,7 +209,7 @@ export function booksPage(
           </thead>
           <tbody>
             ${books.map((book) => {
-              const status = getStatus(book, convertibleAsins, convertedAsins);
+              const status = getBookStatus(book, convertibleAsins, convertedAsins);
               const title = escapeHtml(book.title || book.asin);
               const author = escapeHtml(book.author || "");
               const narrators = escapeHtml(book.narrators || "");
