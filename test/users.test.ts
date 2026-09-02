@@ -16,6 +16,7 @@ import {
   currentUserName,
   setColumnPrefs,
   setAudioSettings,
+  setOutputFormat,
 } from "../src/users.ts";
 import { closeDb, markDownloaded, getAllAudiobooks } from "../src/db.ts";
 
@@ -184,5 +185,37 @@ describe("audio settings", () => {
 
   it("rejects an unknown user", () => {
     assert.throws(() => setAudioSettings("nobody", { format: "mp3", quality: "medium" }), /Unknown user/);
+  });
+});
+
+describe("output format (naming templates)", () => {
+  const format = {
+    directory: [[{ type: "tag" as const, value: "author" }], [{ type: "tag" as const, value: "title" }]],
+    filename: [{ type: "tag" as const, value: "chapterName" }],
+  };
+
+  it("saves and reads back a user's naming template", () => {
+    addUser("alice");
+    assert.equal(getUser("alice")?.outputFormat, undefined, "nothing saved yet");
+
+    setOutputFormat("alice", format);
+    assert.deepEqual(getUser("alice")?.outputFormat, format);
+  });
+
+  it("survives the same round trip a fresh process would see (persisted to disk)", () => {
+    addUser("alice");
+    setOutputFormat("alice", format);
+    assert.deepEqual(listUsers().find((u) => u.name === "alice")?.outputFormat, format);
+  });
+
+  it("keeps each user's template separate", () => {
+    addUser("alice");
+    addUser("bob");
+    setOutputFormat("alice", format);
+    assert.equal(getUser("bob")?.outputFormat, undefined);
+  });
+
+  it("rejects an unknown user", () => {
+    assert.throws(() => setOutputFormat("nobody", format), /Unknown user/);
   });
 });

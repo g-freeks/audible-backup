@@ -579,6 +579,124 @@ describe("conversion quality settings", () => {
   });
 });
 
+describe("output naming builder", () => {
+  let ui: UiContext;
+
+  before(async () => {
+    ui = await startUi();
+    await ui.page.goto(`${ui.baseUrl}/login`, { waitUntil: "networkidle" });
+    await ui.page.fill("#add-name", "alice");
+    await ui.page.click('form[action="/user/add"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+    await ui.page.goto(`${ui.baseUrl}/user/settings`, { waitUntil: "networkidle" });
+  });
+
+  after(async () => {
+    await ui?.close();
+  });
+
+  function directoryRow(index: number) {
+    return ui.page.locator(`#directory-rows .format-row[data-row-index="${index}"]`);
+  }
+
+  it("starts with the default (Title-only, single folder) template and a matching preview", async () => {
+    assert.equal(await ui.page.locator("#directory-rows .format-row").count(), 1);
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title"]);
+    assert.deepEqual(
+      await ui.page.locator("#filename-row .format-chip-label").allInnerTexts(),
+      ["Chapter #", "Chapter Name"],
+    );
+    assert.equal(await ui.page.locator("#format-preview").innerText(), "The Final Empire / 01 - Prologue.mp3");
+  });
+
+  it("adding a tag via the row's select appends a chip and updates the preview live", async () => {
+    await directoryRow(0).locator(".format-add-tag").selectOption("author");
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title", "Author"]);
+    assert.match(await ui.page.locator("#format-preview").innerText(), /The Final EmpireBrandon Sanderson/);
+  });
+
+  it("+ Add folder level adds a new, independently-removable row", async () => {
+    // Row 0 ([Title, Author] from the previous test) is the only row so far.
+    await ui.page.click("#add-folder-level");
+    assert.equal(await ui.page.locator("#directory-rows .format-row").count(), 2);
+
+    await ui.page.selectOption('#directory-rows .format-row[data-row-index="1"] .format-add-tag', "series");
+    assert.deepEqual(await directoryRow(1).locator(".format-chip-label").allInnerTexts(), ["Series"]);
+
+    // Remove the level we just added, leaving row 0 untouched for later tests.
+    await directoryRow(1).locator(".format-remove-row").click();
+    assert.equal(await ui.page.locator("#directory-rows .format-row").count(), 1);
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title", "Author"]);
+  });
+
+  it("+ Text adds an editable literal block that flows into the preview as typed", async () => {
+    // + Text appends, so row 0 becomes [Title, Author, " - "].
+    await directoryRow(0).locator(".format-add-text").click();
+    const textInput = directoryRow(0).locator(".chip-text-input");
+    await textInput.fill(" -- ");
+    assert.match(await ui.page.locator("#format-preview").innerText(), /Brandon Sanderson --/);
+  });
+
+  it("removing a chip drops it from the row and the preview", async () => {
+    // Row 0 is [Title, Author, " | "] from the previous test — remove the
+    // text block (the third remove button, after Title's and Author's).
+    await directoryRow(0).locator(".chip-remove").nth(2).click();
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Title", "Author"]);
+    assert.match(await ui.page.locator("#format-preview").innerText(), /The Final EmpireBrandon Sanderson/);
+  });
+
+  it("dragging a chip onto another reorders within the row", async () => {
+    // Row 0 is [Title, Author]; drag Author before Title.
+    const author = directoryRow(0).locator(".format-chip", { hasText: "Author" });
+    const title = directoryRow(0).locator(".format-chip", { hasText: "Title" });
+    await author.dragTo(title);
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Author", "Title"]);
+  });
+
+  it("dragging a chip into a different row moves it there", async () => {
+    // Row 1 exists (Series added and left empty by an earlier test's setup —
+    // ensure it has a known-empty state first).
+    await ui.page.click("#add-folder-level");
+    const newRowIndex = (await ui.page.locator("#directory-rows .format-row").count()) - 1;
+    const newRow = directoryRow(newRowIndex);
+
+    const title = directoryRow(0).locator(".format-chip", { hasText: "Title" });
+    const newRowZone = newRow.locator(".format-blocks");
+    await title.dragTo(newRowZone);
+
+    assert.deepEqual(await directoryRow(0).locator(".format-chip-label").allInnerTexts(), ["Author"]);
+    assert.deepEqual(await newRow.locator(".format-chip-label").allInnerTexts(), ["Title"]);
+  });
+
+  it("dragging a folder level's grip handle reorders the levels", async () => {
+    const beforeOrder = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    const firstGrip = ui.page.locator('#directory-rows .format-row[data-row-index="0"] .format-row-grip');
+    const lastGrip = ui.page.locator("#directory-rows .format-row").last().locator(".format-row-grip");
+    await firstGrip.dragTo(lastGrip);
+
+    const afterOrder = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    assert.notDeepEqual(afterOrder, beforeOrder, "the level order actually changed");
+    assert.deepEqual(afterOrder[afterOrder.length - 1], beforeOrder[0], "the dragged level landed at the end");
+  });
+
+  it("saves the built template and reloads it exactly as left", async () => {
+    const before = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    await ui.page.click('form[action="/user/settings"] button[type=submit]');
+    await ui.page.waitForLoadState("networkidle");
+
+    const after = await ui.page.locator("#directory-rows .format-row").evaluateAll(
+      (rows) => rows.map((r) => Array.from(r.querySelectorAll(".format-chip-label")).map((c) => c.textContent)),
+    );
+    assert.deepEqual(after, before);
+  });
+});
+
 describe("action menus are not clipped by the table container", () => {
   let ui: UiContext;
 
