@@ -163,6 +163,34 @@ export async function seedManyBooks(env: NodeJS.ProcessEnv): Promise<void> {
   });
 }
 
+/**
+ * Two books in the same series at different entry numbers, one standalone
+ * book with no series at all, and a second author shared by nothing else —
+ * enough to exercise the Series and Author faceted filters.
+ */
+export async function seedSeriesBooks(env: NodeJS.ProcessEnv): Promise<void> {
+  await withFixtureDb(env, (db) => {
+    db.upsertBook("B0MIST0001", {
+      author: "Brandon Sanderson",
+      title: "The Final Empire",
+      seriesTitle: "Mistborn",
+      seriesSequence: "1",
+    });
+    db.markDownloaded("B0MIST0001", "Brandon Sanderson", "The Final Empire", "/x/B0MIST0001.aaxc");
+
+    db.upsertBook("B0MIST0002", {
+      author: "Brandon Sanderson",
+      title: "The Well of Ascension",
+      seriesTitle: "Mistborn",
+      seriesSequence: "2",
+    });
+    db.markDownloaded("B0MIST0002", "Brandon Sanderson", "The Well of Ascension", "/x/B0MIST0002.aaxc");
+
+    db.upsertBook("B0STANDALO", { author: "Ursula K. Le Guin", title: "The Left Hand of Darkness" });
+    db.markDownloaded("B0STANDALO", "Ursula K. Le Guin", "The Left Hand of Darkness", "/x/B0STANDALO.aaxc");
+  });
+}
+
 /** One book whose author name is long enough to break a naive table layout. */
 export async function seedLongAuthor(env: NodeJS.ProcessEnv): Promise<void> {
   await withFixtureDb(env, (db) => {
