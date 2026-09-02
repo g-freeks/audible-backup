@@ -543,8 +543,9 @@
       ? '<button type="button" class="btn btn-sm btn-ghost format-remove-row" data-section="' + section +
         '" data-row-index="' + rowIndex + '" title="Remove this folder level">&times;</button>'
       : "";
-    return '<div class="format-row" data-section="' + section + '" data-row-index="' + rowIndex + '">' + grip +
-      '<div class="format-blocks" data-section="' + section + '" data-row-index="' + rowIndex + '">' + chips + '</div>' +
+    return '<div class="format-row" data-section="' + section + '" data-row-index="' + rowIndex + '">' +
+      '<div class="format-row-main">' + grip +
+      '<div class="format-blocks" data-section="' + section + '" data-row-index="' + rowIndex + '">' + chips + '</div></div>' +
       '<div class="format-row-controls"><select class="format-add-tag" data-section="' + section + '" data-row-index="' +
       rowIndex + '">' + options + '</select><button type="button" class="btn btn-sm btn-ghost format-add-text" data-section="' +
       section + '" data-row-index="' + rowIndex + '">+ Text</button>' + removeRow + '</div></div>';

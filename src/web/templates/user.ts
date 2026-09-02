@@ -80,13 +80,18 @@ const formStyles = `
     .format-section label { display: block; margin-bottom: 0.3rem; }
     #directory-rows, #filename-row { display: flex; flex-direction: column; gap: 0.4rem; }
     .format-row {
-      display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+      display: flex; align-items: center; gap: 0.5rem;
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       padding: 0.4rem 0.5rem;
     }
+    .format-row-main { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; }
     .format-row-grip { cursor: grab; color: var(--text-muted); font-size: 0.9rem; user-select: none; line-height: 1; }
     .format-row-grip:active { cursor: grabbing; }
-    .format-blocks { display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1; min-height: 1.6rem; align-items: center; }
+    .format-blocks {
+      display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1; min-width: 0; min-height: 1.6rem; align-items: center;
+      background: var(--surface); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 0.25rem 0.4rem;
+    }
     .format-chip {
       display: inline-flex; align-items: center; gap: 0.25rem;
       background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
@@ -104,7 +109,10 @@ const formStyles = `
       font-size: 0.85rem; line-height: 1; padding: 0;
     }
     .chip-remove:hover { color: var(--danger); }
-    .format-row-controls { display: flex; align-items: center; gap: 0.3rem; }
+    .format-row-controls {
+      display: flex; align-items: center; gap: 0.3rem; flex-shrink: 0;
+      margin-left: auto; padding-left: 0.5rem; border-left: 1px solid var(--border);
+    }
     .format-add-tag { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.8rem; padding: 0.25rem 0.4rem; }
     .format-preview {
       font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
@@ -354,8 +362,10 @@ function formatRowHtml(
     ? `<button type="button" class="btn btn-sm btn-ghost format-remove-row" data-section="${section}" data-row-index="${rowIndex}" title="Remove this folder level">&times;</button>`
     : "";
   return `<div class="format-row" data-section="${section}" data-row-index="${rowIndex}">
-    ${grip}
-    <div class="format-blocks" data-section="${section}" data-row-index="${rowIndex}">${chips}</div>
+    <div class="format-row-main">
+      ${grip}
+      <div class="format-blocks" data-section="${section}" data-row-index="${rowIndex}">${chips}</div>
+    </div>
     <div class="format-row-controls">
       <select class="format-add-tag" data-section="${section}" data-row-index="${rowIndex}">
         <option value="">+ Tag</option>
