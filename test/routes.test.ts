@@ -402,6 +402,129 @@ describe("POST /api/operation/cancel", () => {
   });
 });
 
+describe("GET /api/operation/stream", () => {
+  it("404s (JSON) when nothing is running", async () => {
+    const res = await app.request("/api/operation/stream");
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: "No active operation" });
+  });
+
+  it("streams SSE for the active operation", async () => {
+    startOperation("sync");
+    const res = await app.request("/api/operation/stream");
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /text\/event-stream/);
+  });
+
+  it("carries each reporter event as a named SSE event with a JSON payload", async () => {
+    const reporter = startOperation("sync");
+    // Emitted before the stream connects, so this also exercises replay().
+    reporter.log("hello");
+    reporter.progress(42, "Downloading");
+    reporter.bookStart("B000000001");
+    reporter.bookDone("B000000001", true);
+
+    const res = await app.request("/api/operation/stream");
+    assert.equal(res.status, 200);
+    reporter.done({ success: true, summary: "ok" });
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    const deadline = Date.now() + 2000;
+    while (!text.includes("event: done") && Date.now() < deadline) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+
+    assert.match(text, /event: log\ndata: \{"type":"log","message":"hello"\}/);
+    assert.match(text, /event: progress\ndata: \{"percent":42,"label":"Downloading"\}/);
+    assert.match(text, /event: book\ndata: \{"asin":"B000000001","state":"processing"\}/);
+    assert.match(text, /event: book\ndata: \{"asin":"B000000001","state":"done"\}/);
+    assert.match(text, /event: done\ndata: \{"success":true,"summary":"ok"\}/);
+  });
+});
+
+describe("operation-start JSON endpoints", () => {
+  it("POST /api/sync answers { type, queued }", async () => {
+    const res = await app.request("/api/sync", { method: "POST" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { type: "sync", queued: [] });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("POST /api/sync refuses (409) while another operation runs", async () => {
+    startOperation("sync");
+    const res = await app.request("/api/sync", { method: "POST" });
+    assert.equal(res.status, 409);
+  });
+
+  it("POST /api/download queues the requested ASINs, or rejects an invalid one", async () => {
+    upsertBook("B000000001", { author: "A1", title: "T1" });
+    const res = await app.request("/api/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asins: ["B000000001"] }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { type: "download", queued: ["B000000001"] });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const bad = await app.request("/api/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asins: ["not-an-asin"] }),
+    });
+    assert.equal(bad.status, 400);
+  });
+
+  it("POST /api/download-all defaults to every not-yet-downloaded book", async () => {
+    upsertBook("B000000001", { author: "A1", title: "T1" });
+    const res = await app.request("/api/download-all", { method: "POST" });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.type, "download-all");
+    assert.ok(data.queued.includes("B000000001"));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("POST /api/convert/:asin 404s a book with no files to convert", async () => {
+    const res = await app.request("/api/convert/B000000009", { method: "POST" });
+    assert.equal(res.status, 404);
+    const data = await res.json();
+    assert.match(data.error, /not found/);
+  });
+
+  it("POST /api/convert/:asin rejects an invalid ASIN", async () => {
+    const res = await app.request("/api/convert/nope", { method: "POST" });
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /api/prepare/:asin queues the ASIN", async () => {
+    const res = await app.request("/api/prepare/B000000009", { method: "POST" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { type: "prepare", queued: ["B000000009"] });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+
+  it("every start endpoint 409s while an operation is already running", async () => {
+    upsertBook("B000000001", { author: "A1", title: "T1" });
+    startOperation("sync");
+
+    const checks: Array<[string, RequestInit]> = [
+      ["/api/download", { method: "POST" }],
+      ["/api/download-all", { method: "POST" }],
+      ["/api/convert/B000000001", { method: "POST" }],
+      ["/api/prepare/B000000001", { method: "POST" }],
+    ];
+    for (const [path, init] of checks) {
+      const res = await app.request(path, init);
+      assert.equal(res.status, 409, `${path} should 409 while an operation is running`);
+    }
+  });
+});
+
 // --- Ignore / Unignore ---
 
 describe("POST /api/ignore/:asin", () => {

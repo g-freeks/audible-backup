@@ -26,7 +26,7 @@ import {
   cancelOperation,
   wasCancelled,
 } from "../operations.ts";
-import { sseStream } from "./sse.ts";
+import { sseStream, sseJsonStream } from "./sse.ts";
 import { booksPage } from "./templates/books.ts";
 import { loginPage, settingsPage, type AudibleStatus } from "./templates/user.ts";
 import { runHelper, HelperUnavailableError } from "../pyhelper.ts";
@@ -983,6 +983,20 @@ routes.post("/library/sync", (c) => {
   return c.html(logPanel("/library/sync/stream", "Sync started..."));
 });
 
+routes.post("/api/sync", (c) => {
+  if (isOperationRunning()) return c.json({ error: "An operation is already running" }, 409);
+
+  const reporter = startOperation("sync");
+  const library = new AudibleLibrary(requestPaths().targetDir, reporter);
+  library
+    .sync()
+    .then(() => reporter.done({ success: true, summary: "Sync complete" }))
+    .catch((err: Error) => reporter.done({ success: false, summary: failureSummary(err) }))
+    .finally(() => clearOperation());
+
+  return c.json({ type: "sync", queued: [] });
+});
+
 /** An operation's stream is only visible to the user who started it. */
 function ownsOperation(op: { user?: string }): boolean {
   return !op.user || op.user === currentUserName();
@@ -1009,6 +1023,17 @@ routes.get("/api/operation", (c) => {
     return c.json({ running: false });
   }
   return c.json({ running: true, type: op.type });
+});
+
+// One global active operation (see operations.ts), so one stream serves
+// whatever is running — unlike the five per-type HTML streams below, kept
+// for the current UI until it's removed.
+routes.get("/api/operation/stream", (c) => {
+  const op = getActiveOperation();
+  if (!op || op.finished || !ownsOperation(op)) {
+    return c.json({ error: "No active operation" }, 404);
+  }
+  return sseJsonStream(c, op.reporter);
 });
 
 routes.get("/library/sync/stream", (c) => {
@@ -1079,6 +1104,51 @@ routes.post("/library/download", async (c) => {
   const oobSwaps = books.map((b) => queuedSwap(b.asin)).join("");
 
   return c.html(logPanel("/library/download/stream", "Download started...", oobSwaps));
+});
+
+routes.post("/api/download", async (c) => {
+  if (isOperationRunning()) return c.json({ error: "An operation is already running" }, 409);
+
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // no body: falls back to "every not-yet-downloaded book" below
+  }
+  const record = body as { asins?: unknown; force?: unknown } | null;
+  let asins: string[] = [];
+  if (Array.isArray(record?.asins)) {
+    asins = record.asins.filter((a): a is string => typeof a === "string");
+    if (!asins.every(isValidAsin)) return c.json({ error: "Invalid ASIN" }, 400);
+  }
+  const force = record?.force === true;
+
+  const reporter = startOperation("download");
+  const library = new AudibleLibrary(requestPaths().targetDir, reporter);
+
+  let books: AudiobookEntry[];
+  if (asins.length > 0) {
+    books = asins.map((asin) => {
+      const row = getAudiobookByAsin(asin);
+      return { asin, author: row?.author || "", title: row?.title || asin, fullLine: "" };
+    });
+  } else {
+    const notDownloaded = getNotDownloadedBooks();
+    books = notDownloaded.map((row) => ({
+      asin: row.asin,
+      author: row.author || "",
+      title: row.title || row.asin,
+      fullLine: "",
+    }));
+  }
+
+  library
+    .downloadBooks(books, force)
+    .then(() => reporter.done({ success: true, summary: "Download complete" }))
+    .catch((err: Error) => reporter.done({ success: false, summary: failureSummary(err) }))
+    .finally(() => clearOperation());
+
+  return c.json({ type: "download", queued: books.map((b) => b.asin) });
 });
 
 routes.get("/library/download/stream", (c) => {
@@ -1174,6 +1244,85 @@ routes.post("/library/download-all", async (c) => {
   const oobSwaps = downloadBooks.map((b) => queuedSwap(b.asin)).join("") + alreadyDownloadedQueuedSwaps;
 
   return c.html(logPanel("/library/download-all/stream", "Download started...", oobSwaps));
+});
+
+routes.post("/api/download-all", async (c) => {
+  if (isOperationRunning()) return c.json({ error: "An operation is already running" }, 409);
+
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // no body: falls back to "every not-yet-downloaded book" below
+  }
+  const record = body as { asins?: unknown } | null;
+  let selected: string[] | undefined;
+  if (Array.isArray(record?.asins)) {
+    selected = record.asins.filter((a): a is string => typeof a === "string");
+    if (!selected.every(isValidAsin)) return c.json({ error: "Invalid ASIN" }, 400);
+  }
+  const selectedAsins = selected ? new Set(selected) : undefined;
+
+  const paths = requestPaths();
+  const notDownloaded = getNotDownloadedBooks().filter(
+    (row) => !selectedAsins || selectedAsins.has(row.asin),
+  );
+  const downloadBooks: AudiobookEntry[] = notDownloaded.map((row) => ({
+    asin: row.asin,
+    author: row.author || "",
+    title: row.title || row.asin,
+    fullLine: "",
+  }));
+
+  // Books already downloaded but not yet converted can be reported queued
+  // right away; freshly downloaded ones only become convertible once the
+  // download step lands their files, so the client learns their real status
+  // from the usual /api/books refresh once the operation finishes.
+  let alreadyDownloadedQueued: string[] = [];
+  try {
+    const converter = new Converter(paths.targetDir, paths.outputDir, paths.activationBytes);
+    const ignoredAsins = getIgnoredAsins();
+    alreadyDownloadedQueued = converter
+      .findBookFiles()
+      .filter(
+        (b) =>
+          !ignoredAsins.has(b.asin) &&
+          (!selectedAsins || selectedAsins.has(b.asin)) &&
+          findConvertedChapters(paths.outputDir, b.asin, b.bookTitle, paths.outputFormat).length === 0,
+      )
+      .map((b) => b.asin);
+  } catch {
+    // activation bytes or target dir may not be configured yet
+  }
+
+  const reporter = startOperation("download-all");
+  const library = new AudibleLibrary(paths.targetDir, reporter);
+
+  const run = async (): Promise<void> => {
+    if (downloadBooks.length > 0) {
+      await library.downloadBooks(downloadBooks, false);
+    }
+    const converter = new Converter(
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
+      reporter,
+      false,
+      paths.audioSettings,
+      paths.outputFormat,
+    );
+    await converter.convertAll(selectedAsins);
+  };
+
+  run()
+    .then(() => reporter.done({ success: true, summary: "Download complete" }))
+    .catch((err: Error) => reporter.done({ success: false, summary: failureSummary(err) }))
+    .finally(() => clearOperation());
+
+  return c.json({
+    type: "download-all",
+    queued: [...downloadBooks.map((b) => b.asin), ...alreadyDownloadedQueued],
+  });
 });
 
 routes.get("/library/download-all/stream", (c) => {
@@ -1319,6 +1468,61 @@ routes.post("/convert/:asin", async (c) => {
   }
 });
 
+routes.post("/api/convert/:asin", async (c) => {
+  const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.json({ error: "Invalid ASIN" }, 400);
+  if (isOperationRunning()) return c.json({ error: "An operation is already running" }, 409);
+
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // force defaults to false below
+  }
+  const force = (body as { force?: unknown } | null)?.force === true;
+
+  const reporter = startOperation("convert");
+
+  try {
+    const paths = requestPaths();
+    const converter = new Converter(
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
+      reporter,
+      force,
+      paths.audioSettings,
+      paths.outputFormat,
+    );
+    const books = converter.findBookFiles();
+    const book = books.find((b) => b.asin === asin);
+
+    if (!book) {
+      clearOperation();
+      return c.json({ error: `Book with ASIN ${asin} not found` }, 404);
+    }
+
+    converter
+      .convertBook(book.aaxFile, book.chapterFile, book.asin, book.bookTitle, book.bookCover, book.voucherFile)
+      .then((success) =>
+        reporter.done({
+          success,
+          summary: success
+            ? `Successfully converted ${book.bookTitle || asin}`
+            : `Failed to convert ${book.bookTitle || asin}`,
+        }),
+      )
+      .catch((err: Error) => reporter.done({ success: false, summary: failureSummary(err) }))
+      .finally(() => clearOperation());
+
+    return c.json({ type: "convert", queued: [asin] });
+  } catch (err) {
+    clearOperation();
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 400);
+  }
+});
+
 /** A cancelled run should say so, not surface the killed child's error. */
 function failureSummary(err: Error): string {
   return wasCancelled() ? "Cancelled" : err.message;
@@ -1424,6 +1628,62 @@ routes.post("/prepare/:asin", async (c) => {
   return c.html(
     logPanel("/prepare/stream", `Preparing ${asin}...`, queuedSwap(asin)),
   );
+});
+
+routes.post("/api/prepare/:asin", async (c) => {
+  const asin = c.req.param("asin");
+  if (!isValidAsin(asin)) return c.json({ error: "Invalid ASIN" }, 400);
+  if (isOperationRunning()) return c.json({ error: "An operation is already running" }, 409);
+
+  const paths = requestPaths();
+  const reporter = startOperation("prepare");
+
+  const run = async (): Promise<void> => {
+    const row = getAudiobookByAsin(asin);
+
+    if (!row?.downloaded_at) {
+      const library = new AudibleLibrary(paths.targetDir, reporter);
+      const ok = await library.downloadBook(asin, row?.author || "", row?.title || asin, false);
+      if (!ok) throw new Error("Could not download this book from Audible");
+    }
+
+    const converter = new Converter(
+      paths.targetDir,
+      paths.outputDir,
+      paths.activationBytes,
+      reporter,
+      false,
+      paths.audioSettings,
+      paths.outputFormat,
+    );
+    const book = converter.findBookFiles().find((b) => b.asin === asin);
+    if (!book) {
+      throw new Error("Downloaded files for this book were not found, so it cannot be converted");
+    }
+    const ok = await converter.convertBook(
+      book.aaxFile,
+      book.chapterFile,
+      book.asin,
+      book.bookTitle,
+      book.bookCover,
+      book.voucherFile,
+    );
+    if (!ok) throw new Error("Conversion failed");
+  };
+
+  run()
+    .then(() =>
+      reporter.done({
+        success: true,
+        ...(isDesktopMode()
+          ? { summary: `Saved to ${paths.outputDir}` }
+          : { summary: "Ready — your download is starting", downloadUrl: `/download/converted/${asin}` }),
+      }),
+    )
+    .catch((err: Error) => reporter.done({ success: false, summary: failureSummary(err) }))
+    .finally(() => clearOperation());
+
+  return c.json({ type: "prepare", queued: [asin] });
 });
 
 routes.get("/prepare/stream", (c) => {
