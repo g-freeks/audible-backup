@@ -541,12 +541,23 @@ describe("conversion quality settings", () => {
     assert.match(tooltip || "", /86 MB/, "tooltip re-estimated for the now-selected format (aac), not mp3");
   });
 
-  it("the args field stays read-only until the manual toggle is checked", async () => {
+  it("the args field stays visibly disabled until the sliding toggle is switched on", async () => {
     const argsInput = ui.page.locator("#audio-args");
-    assert.equal(await argsInput.getAttribute("readonly"), "");
+    const track = ui.page.locator(".switch-track");
+    assert.equal(await argsInput.isDisabled(), true);
+    assert.equal(await argsInput.evaluate((el) => getComputedStyle(el).opacity), "0.5", "reads as disabled, not just non-editable");
+    assert.equal(await track.evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0.09)", "toggle off");
 
-    await ui.page.check("#audio-custom-toggle");
-    assert.equal(await argsInput.getAttribute("readonly"), null);
+    // The checkbox itself is visually hidden — click the visible switch, the
+    // way a real user (and its wrapping <label>) would.
+    await ui.page.click(".switch");
+    assert.equal(await ui.page.locator("#audio-custom-toggle").isChecked(), true);
+    assert.equal(await argsInput.isDisabled(), false);
+    await ui.page.waitForFunction(
+      () => getComputedStyle(document.querySelector(".switch-track")).backgroundColor === "rgb(53, 132, 228)",
+      { timeout: 2000 },
+    ); // the 0.15s background transition needs a moment to settle
+    assert.equal(await track.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(53, 132, 228)", "toggle on (accent color)");
 
     await argsInput.fill("-c:a libmp3lame -q:a 0");
     await ui.page.click('form[action="/user/settings"] button[type=submit]');
@@ -554,7 +565,17 @@ describe("conversion quality settings", () => {
 
     assert.equal(await ui.page.locator("#audio-args").inputValue(), "-c:a libmp3lame -q:a 0");
     assert.equal(await ui.page.locator("#audio-custom-toggle").isChecked(), true);
-    assert.equal(await ui.page.locator("#audio-args").getAttribute("readonly"), null);
+    assert.equal(await ui.page.locator("#audio-args").isDisabled(), false);
+  });
+
+  it("the args field and its toggle sit on their own row, above the (now full-width) text input", async () => {
+    const settingRow = ui.page.locator(".setting-row", { has: ui.page.locator('label[for="audio-args"]') });
+    assert.equal(await settingRow.count(), 1);
+    assert.equal(await settingRow.locator(".switch").count(), 1, "the toggle lives in the same row as the label");
+
+    const rowBottom = await settingRow.evaluate((el) => el.getBoundingClientRect().bottom);
+    const inputTop = await ui.page.locator("#audio-args").evaluate((el) => el.getBoundingClientRect().top);
+    assert.ok(inputTop >= rowBottom, "the text input sits below the label/toggle row, on its own line");
   });
 });
 

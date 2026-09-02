@@ -501,7 +501,7 @@
     if (e.target.id === "audio-custom-toggle") {
       var argsInput = document.getElementById("audio-args");
       if (argsInput) {
-        argsInput.readOnly = !e.target.checked;
+        argsInput.disabled = !e.target.checked;
         if (e.target.checked) argsInput.focus();
       }
     }
