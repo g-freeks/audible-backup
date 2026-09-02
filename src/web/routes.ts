@@ -131,17 +131,30 @@ function isValidAsin(asin: string): boolean {
 
 const PUBLIC_PATHS = new Set(["/login", "/user/switch", "/user/add"]);
 
+/** POST /api/session (login) and POST /api/users (add) are how a session is
+ * obtained in the first place — the JSON equivalents of /user/switch and
+ * /user/add above, so they need the same session-free access. */
+function isPublicApiWrite(c: Context): boolean {
+  return (
+    c.req.method === "POST" &&
+    (c.req.path === "/api/session" || c.req.path === "/api/users")
+  );
+}
+
 routes.use("*", async (c, next) => {
   // One implicit user, no login screen.
   if (isDesktopMode()) {
     return runWithUser(ensureDesktopUser(), () => next());
   }
-  if (PUBLIC_PATHS.has(c.req.path)) return next();
+  if (PUBLIC_PATHS.has(c.req.path) || isPublicApiWrite(c)) return next();
   if (!hasUsers()) return next();
 
   const userName = getSessionUser(getCookie(c, "session"));
   const user = userName ? getUser(userName) : undefined;
   if (!user) {
+    // The SPA needs to read session state before it has one, to learn there
+    // is no session yet rather than treating "not logged in" as an error.
+    if (c.req.method === "GET" && c.req.path === "/api/session") return next();
     // A SPA fetch would silently follow a 302 and receive the login page with
     // status 200, so API paths get a real status code instead.
     if (isApiPath(c)) return c.json({ error: "Unauthorized" }, 401);
@@ -224,8 +237,20 @@ function startUserSession(c: Context, userName: string): void {
 // --- User routes ---
 
 const ACCOUNT_PATHS = ["/login", "/user/switch", "/user/add", "/user/logout"];
+
+/** GET /api/session stays available in desktop mode (it's how the SPA learns
+ * there are no accounts to manage) — only the write endpoints that manage
+ * accounts are blocked, matching the form routes above. */
+function isAccountManagementRequest(c: Context): boolean {
+  if (ACCOUNT_PATHS.includes(c.req.path)) return true;
+  if (c.req.path === "/api/users" && c.req.method === "POST") return true;
+  if (c.req.path === "/api/session" && c.req.method !== "GET") return true;
+  return false;
+}
+
 routes.use("*", async (c, next) => {
-  if (isDesktopMode() && ACCOUNT_PATHS.includes(c.req.path)) {
+  if (isDesktopMode() && isAccountManagementRequest(c)) {
+    if (isApiPath(c)) return c.json({ error: "Not available in desktop mode" }, 404);
     return c.text("Not available in desktop mode", 404);
   }
   return next();
@@ -273,6 +298,61 @@ routes.post("/user/logout", (c) => {
   destroySession(getCookie(c, "session"));
   deleteCookie(c, "session", { path: "/" });
   return c.redirect("/login");
+});
+
+// --- JSON equivalents, for the SPA ---
+
+function sessionState(userName: string) {
+  return { current: userName, others: userListEntries().filter((u) => u.name !== userName) };
+}
+
+routes.post("/api/session", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const record = body as { name?: unknown; password?: unknown } | null;
+  const name = typeof record?.name === "string" ? record.name : "";
+  const password = typeof record?.password === "string" ? record.password : "";
+
+  const user = getUser(name);
+  if (!user) return c.json({ error: "Unknown user" }, 400);
+  if (userHasPassword(user) && !verifyPassword(user, password)) {
+    return c.json({ error: "Wrong password" }, 401);
+  }
+
+  startUserSession(c, user.name);
+  return c.json(sessionState(user.name));
+});
+
+routes.delete("/api/session", (c) => {
+  destroySession(getCookie(c, "session"));
+  deleteCookie(c, "session", { path: "/" });
+  return c.body(null, 204);
+});
+
+routes.post("/api/users", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const record = body as { name?: unknown; password?: unknown; activationBytes?: unknown } | null;
+  const name = typeof record?.name === "string" ? record.name.trim() : "";
+  const password = typeof record?.password === "string" ? record.password : "";
+  const activationBytes = typeof record?.activationBytes === "string" ? record.activationBytes : "";
+
+  try {
+    const user = addUser(name, password || undefined, activationBytes || undefined);
+    startUserSession(c, user.name);
+    return c.json(sessionState(user.name), 201);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 400);
+  }
 });
 
 /** Whether this user's config dir is linked to Audible, via the helper. */
@@ -620,21 +700,21 @@ routes.get("/api/books", (c) => {
 
 routes.post("/api/ignore/:asin", (c) => {
   const asin = c.req.param("asin");
-  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
+  if (!isValidAsin(asin)) return c.json({ error: "Invalid ASIN" }, 400);
   ignoreBook(asin);
-  return c.redirect("/");
+  return c.body(null, 204);
 });
 
 routes.post("/api/unignore/:asin", (c) => {
   const asin = c.req.param("asin");
-  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
+  if (!isValidAsin(asin)) return c.json({ error: "Invalid ASIN" }, 400);
   unignoreBook(asin);
-  return c.redirect("/");
+  return c.body(null, 204);
 });
 
 routes.post("/api/delete/:asin", (c) => {
   const asin = c.req.param("asin");
-  if (!isValidAsin(asin)) return c.text("Invalid ASIN", 400);
+  if (!isValidAsin(asin)) return c.json({ error: "Invalid ASIN" }, 400);
   const book = getAudiobookByAsin(asin);
 
   if (book) {
@@ -668,7 +748,7 @@ routes.post("/api/delete/:asin", (c) => {
     deleteBook(asin);
   }
 
-  return c.redirect("/");
+  return c.body(null, 204);
 });
 
 // --- Downloads to the browser ---
@@ -1095,14 +1175,19 @@ function failureSummary(err: Error): string {
   return wasCancelled() ? "Cancelled" : err.message;
 }
 
-routes.post("/operation/cancel", (c) => {
+/** Registered under both the legacy path (used by the HTMX UI's fetch call)
+ * and /api/ (for the SPA) — same behavior, JSON only for the /api/ path. */
+function handleCancelOperation(c: Context) {
   const op = getActiveOperation();
   if (!op || op.finished || !ownsOperation(op)) {
-    return c.text("No operation to cancel", 404);
+    return isApiPath(c) ? c.json({ error: "No operation to cancel" }, 404) : c.text("No operation to cancel", 404);
   }
   cancelOperation();
-  return c.text("Cancelling");
-});
+  return isApiPath(c) ? c.json({ ok: true }) : c.text("Cancelling");
+}
+
+routes.post("/operation/cancel", handleCancelOperation);
+routes.post("/api/operation/cancel", handleCancelOperation);
 
 // --- One-click: fetch from Audible if needed, convert if needed, then hand
 // --- the finished ZIP to the browser.

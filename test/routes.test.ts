@@ -15,7 +15,7 @@ import {
   deleteBook,
   getAudiobookByAsin,
 } from "../src/db.ts";
-import { clearOperation, startOperation } from "../src/operations.ts";
+import { clearOperation, startOperation, wasCancelled } from "../src/operations.ts";
 
 /** Creates the on-disk output directory + a chapter mp3 that makes a book "converted". */
 function markBookConverted(title: string): void {
@@ -259,6 +259,92 @@ describe("GET /api/session", () => {
   });
 });
 
+describe("GET /api/session without a session cookie", () => {
+  it("still answers 200 (anonymous) once users exist, rather than 401", async () => {
+    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
+    const res = await app.request("/api/session");
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.current, null);
+    assert.deepEqual(data.others.map((u: { name: string }) => u.name), ["alice"]);
+  });
+});
+
+describe("POST /api/session (JSON login)", () => {
+  it("logs in a passwordless user and returns session state", async () => {
+    await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
+
+    const res = await app.request("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "alice" }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(sessionCookie(res).startsWith("session="), true);
+    assert.deepEqual(await res.json(), { current: "alice", others: [] });
+  });
+
+  it("rejects an unknown user", async () => {
+    const res = await app.request("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "nobody" }),
+    });
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "Unknown user" });
+  });
+
+  it("rejects a wrong password", async () => {
+    await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name: "alice", password: "secret" }),
+    });
+    const res = await app.request("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "alice", password: "wrong" }),
+    });
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "Wrong password" });
+  });
+});
+
+describe("DELETE /api/session (JSON logout)", () => {
+  it("clears the session cookie", async () => {
+    const cookie = await addUserAndLogin(app, "alice");
+
+    const res = await app.request("/api/session", { method: "DELETE", headers: { cookie } });
+    assert.equal(res.status, 204);
+
+    const after = await app.request("/api/books", { headers: { cookie } });
+    assert.equal(after.status, 401, "the destroyed session must no longer authenticate");
+  });
+});
+
+describe("POST /api/users (JSON add)", () => {
+  it("creates a user and returns session state", async () => {
+    const res = await app.request("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "alice", activationBytes: "deadbeef" }),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(sessionCookie(res).startsWith("session="), true);
+    assert.deepEqual(await res.json(), { current: "alice", others: [] });
+  });
+
+  it("rejects an invalid name", async () => {
+    const res = await app.request("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "not a valid name!" }),
+    });
+    assert.equal(res.status, 400);
+    const data = await res.json();
+    assert.ok(data.error);
+  });
+});
+
 describe("GET /api/settings", () => {
   it("requires a session (401, not a redirect a fetch would silently follow)", async () => {
     await app.request("/user/add", { method: "POST", body: new URLSearchParams({ name: "alice" }) });
@@ -300,26 +386,35 @@ describe("GET /api/operation", () => {
   });
 });
 
+describe("POST /api/operation/cancel", () => {
+  it("404s (JSON) when nothing is running", async () => {
+    const res = await app.request("/api/operation/cancel", { method: "POST" });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: "No operation to cancel" });
+  });
+
+  it("cancels the active operation and answers JSON", async () => {
+    startOperation("sync");
+    const res = await app.request("/api/operation/cancel", { method: "POST" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true });
+    assert.ok(wasCancelled());
+  });
+});
+
 // --- Ignore / Unignore ---
 
 describe("POST /api/ignore/:asin", () => {
-  it("ignores a book and redirects to /", async () => {
+  it("ignores a book", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
-    const res = await app.request("/api/ignore/B000000001", {
-      method: "POST",
-      redirect: "manual",
-    });
-    assert.equal(res.status, 302);
-    assert.ok(res.headers.get("location")?.endsWith("/"));
+    const res = await app.request("/api/ignore/B000000001", { method: "POST" });
+    assert.equal(res.status, 204);
     assert.ok(isIgnored("B000000001"));
   });
 
   it("ignores an unknown ASIN (upsert)", async () => {
-    const res = await app.request("/api/ignore/B099999999", {
-      method: "POST",
-      redirect: "manual",
-    });
-    assert.equal(res.status, 302);
+    const res = await app.request("/api/ignore/B099999999", { method: "POST" });
+    assert.equal(res.status, 204);
     assert.ok(isIgnored("B099999999"));
   });
 
@@ -343,17 +438,13 @@ describe("POST /api/ignore/:asin", () => {
 });
 
 describe("POST /api/unignore/:asin", () => {
-  it("unignores a book and redirects to /", async () => {
+  it("unignores a book", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
     ignoreBook("B000000001");
     assert.ok(isIgnored("B000000001"));
 
-    const res = await app.request("/api/unignore/B000000001", {
-      method: "POST",
-      redirect: "manual",
-    });
-    assert.equal(res.status, 302);
-    assert.ok(res.headers.get("location")?.endsWith("/"));
+    const res = await app.request("/api/unignore/B000000001", { method: "POST" });
+    assert.equal(res.status, 204);
     assert.ok(!isIgnored("B000000001"));
   });
 
@@ -380,11 +471,8 @@ describe("POST /api/unignore/:asin", () => {
 
   it("unignore is a no-op for non-ignored ASIN", async () => {
     markDownloaded("B000000001", "A1", "T1", "/a.aax");
-    const res = await app.request("/api/unignore/B000000001", {
-      method: "POST",
-      redirect: "manual",
-    });
-    assert.equal(res.status, 302);
+    const res = await app.request("/api/unignore/B000000001", { method: "POST" });
+    assert.equal(res.status, 204);
     assert.ok(!isIgnored("B000000001"));
     const booksRes = await app.request("/api/books");
     const data = await booksRes.json();
@@ -395,15 +483,11 @@ describe("POST /api/unignore/:asin", () => {
 // --- Delete ---
 
 describe("POST /api/delete/:asin", () => {
-  it("resets DB fields and redirects to /", async () => {
+  it("resets DB fields", async () => {
     markDownloaded("B000000001", "A1", "T1", "/nonexistent.aax");
 
-    const res = await app.request("/api/delete/B000000001", {
-      method: "POST",
-      redirect: "manual",
-    });
-    assert.equal(res.status, 302);
-    assert.ok(res.headers.get("location")?.endsWith("/"));
+    const res = await app.request("/api/delete/B000000001", { method: "POST" });
+    assert.equal(res.status, 204);
 
     const book = getAudiobookByAsin("B000000001");
     assert.ok(book);
@@ -425,10 +509,7 @@ describe("POST /api/delete/:asin", () => {
 
     markDownloaded("B000000001", "A1", "TestBook", aaxFile);
 
-    await app.request("/api/delete/B000000001", {
-      method: "POST",
-      redirect: "manual",
-    });
+    await app.request("/api/delete/B000000001", { method: "POST" });
 
     assert.ok(!fs.existsSync(aaxFile));
     assert.ok(!fs.existsSync(chapterFile));
@@ -606,11 +687,8 @@ describe("ASIN validation", () => {
 
   it("still accepts a valid ASIN on ignore", async () => {
     upsertBook("B000000009", { author: "Author", title: "Title" });
-    const res = await app.request("/api/ignore/B000000009", {
-      method: "POST",
-      redirect: "manual",
-    });
-    assert.equal(res.status, 302);
+    const res = await app.request("/api/ignore/B000000009", { method: "POST" });
+    assert.equal(res.status, 204);
     assert.equal(isIgnored("B000000009"), true);
   });
 });

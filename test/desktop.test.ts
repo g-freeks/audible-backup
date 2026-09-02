@@ -157,6 +157,21 @@ describe("single-user desktop UI", () => {
     }
   });
 
+  it("has no JSON account management endpoints, but keeps GET /api/session", async () => {
+    for (const req of [
+      { path: "/api/session", method: "POST" },
+      { path: "/api/session", method: "DELETE" },
+      { path: "/api/users", method: "POST" },
+    ]) {
+      const res = await app.request(req.path, { method: req.method, ...withToken });
+      assert.equal(res.status, 404, `${req.method} ${req.path} should not exist in desktop mode`);
+    }
+
+    const session = await app.request("/api/session", withToken);
+    assert.equal(session.status, 200);
+    assert.deepEqual(await session.json(), { desktop: true, current: null, others: [] });
+  });
+
   it("shows which build is running", async () => {
     // A packaged install gives no other way to tell whether an update
     // actually landed, which is the whole reason this line exists.
