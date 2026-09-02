@@ -729,6 +729,19 @@ describe("UI security headers", () => {
   });
 });
 
+describe("dark-mode form controls", () => {
+  it("declares color-scheme so native controls (e.g. <select>) render legibly in dark mode", async () => {
+    // Regression: without this, some engines (WebKitGTK — the desktop
+    // shell's own renderer — included) kept form controls' native-drawn
+    // background light even once our own dark-mode colors applied, while
+    // still honoring the author's (light-on-dark) text color — unreadable
+    // white-on-white text in selects like the Columns/tag pickers.
+    const html = await (await app.request("/")).text();
+    assert.match(html, /:root\s*\{[^}]*color-scheme:\s*light dark/);
+    assert.match(html, /prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{[^}]*color-scheme:\s*dark/);
+  });
+});
+
 // --- User nav discoverability ---
 
 describe("user navigation", () => {
