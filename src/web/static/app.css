@@ -1,0 +1,544 @@
+/* Ported verbatim from src/web/templates/layout.ts and user.ts's
+   formStyles — the React client reuses these exact class names so the
+   Adwaita-matching look (and the GTK4 desktop shell's dark-mode
+   handling, driven by color-scheme below) carries over unchanged. */
+
+    /* Adwaita named colors (see libadwaita's colors.md): light by default,
+       overridden under prefers-color-scheme so the page follows the system
+       the same way a native GNOME app would. */
+    :root {
+      /* Without this, some engines (WebKitGTK in particular — the desktop
+         shell's own renderer) keep drawing native form-control chrome
+         (select boxes, checkboxes) in light mode even once our own colors
+         below go dark, since nothing told them a dark variant exists: the
+         author-set text color on a select was honored, but its native-drawn
+         background stayed light, producing unreadable white-on-white text. */
+      color-scheme: light dark;
+      --bg: #fafafb;
+      --surface: #ffffff;
+      --surface2: #f3f3f4;
+      --view-bg: #ffffff;
+      --border: rgba(0, 0, 0, 0.09);
+      --text: rgba(0, 0, 0, 0.8);
+      --text-muted: rgba(0, 0, 0, 0.55);
+      --accent: #3584e4;
+      --accent-hover: #1c71d8;
+      --success: #2ec27e;
+      --warn: #e5a50a;
+      --danger: #e01b24;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #222226;
+        --surface: #303030;
+        --surface2: #383838;
+        --view-bg: #1e1e1e;
+        --border: rgba(255, 255, 255, 0.09);
+        --text: #ffffff;
+        --text-muted: rgba(255, 255, 255, 0.6);
+        --accent: #78aeed;
+        --accent-hover: #3584e4;
+        --success: #8ff0a4;
+        --warn: #f8e45c;
+        --danger: #ff7b63;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    main {
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin-bottom: 1rem; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .card .label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 1.8rem; font-weight: 700; margin-top: 0.25rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td { padding: 0.75rem 1rem; text-align: left; }
+    th {
+      background: var(--surface2);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+    td { border-top: 1px solid var(--border); font-size: 0.9rem; }
+    tr:hover td { background: var(--surface2); }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-success { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+    .badge-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+    .badge-muted { background: color-mix(in srgb, var(--text-muted) 15%, transparent); color: var(--text-muted); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    a.btn, a.dropdown-item { text-decoration: none; box-sizing: border-box; }
+    .log-panel {
+      background: var(--view-bg);
+      padding: 1rem;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 0.8rem;
+      line-height: 1.7;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-line.error { color: var(--danger); }
+    .log-line.warn { color: var(--warn); }
+    .log-done { padding-top: 0.5rem; border-top: 1px solid var(--border); margin-top: 0.5rem; font-weight: 600; }
+    .log-done.success { color: var(--success); }
+    .log-done.error { color: var(--danger); }
+    /* Anchored under the topbar button that opens it. Closed until asked for:
+       operations only light up the indicator on that button. */
+    #log-float {
+      position: fixed;
+      top: 3.1rem;
+      right: 1rem;
+      width: min(700px, calc(100% - 2rem));
+      max-height: min(60vh, 520px);
+      z-index: 150;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #log-float.visible { display: flex; }
+    #log-float-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.75rem;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: default;
+      user-select: none;
+    }
+    #log-float-header button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0 0.25rem;
+      transition: color 0.15s;
+    }
+    #log-float-header button:hover { color: var(--text); }
+    #log-float .log-panel { flex: 1; }
+    .log-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      margin-left: 0.15rem;
+      vertical-align: middle;
+    }
+    .log-dot[hidden] { display: none; }
+    .log-dot.running { background: var(--accent); animation: log-pulse 1.2s ease-in-out infinite; }
+    .log-dot.done { background: var(--success); }
+    .log-dot.failed { background: var(--danger); }
+    @keyframes log-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+    .empty { text-align: center; padding: 3rem; color: var(--text-muted); }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline-block; }
+    .spinner { width: 1em; height: 1em; border: 2px solid var(--text-muted); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .library-layout {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 4rem);
+    }
+    /* A long value must not stretch its column and squeeze everything else
+       (more of a risk now that the table has many metadata columns); the
+       full value stays available through the cell's title attribute. */
+    .col-author { max-width: 16rem; }
+    .col-title { max-width: 20rem; }
+    td.col-author, td.col-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .table-scroll {
+      /* position + z-index (not just position) is what creates a new
+         stacking context — needed so the sticky header's z-index:1 below
+         stays scoped to this container instead of competing globally with
+         portaled overlays (Menu/Popover popups) elsewhere on the page. */
+      position: relative;
+      z-index: 0;
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .table-scroll table { border: none; border-radius: 0; }
+    .table-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--surface2); }
+    .progress-bar {
+      height: 3px;
+      background: var(--surface2);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 40%;
+      background: var(--accent);
+      border-radius: 2px;
+      animation: progress-indeterminate 1.5s ease-in-out infinite;
+      transition: width 0.3s ease;
+    }
+    @keyframes progress-indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+    .badge-danger { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+    .progress-bar-lg { height: 6px; margin-top: 0; }
+    .progress-label { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; display: block; }
+    #op-progress { margin-bottom: 0.5rem; }
+    #op-progress:empty { margin-bottom: 0; }
+    [id^="status-"] .progress-bar { height: 6px; min-width: 80px; }
+    /* Lives in the topbar now, sharing a row with the title and the log/user
+       controls, so it is sized to match those btn-sm-scale controls rather
+       than the roomier full-width bar it used to have to itself. */
+    .search-wrap { position: relative; display: flex; flex: 1 1 14rem; min-width: 9rem; max-width: 22rem; }
+    .search-wrap input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 0.3rem 1.8rem 0.3rem 0.6rem;
+      font-size: 0.8rem;
+      outline: none;
+      width: 100%;
+    }
+    .search-clear {
+      position: absolute;
+      right: 0.4rem;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 0.3rem;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .search-clear:hover { color: var(--text); background: var(--surface2); }
+    .search-clear[hidden] { display: none; }
+    .search-wrap input:focus { border-color: var(--accent); }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { color: var(--text); }
+    th.sortable::after { content: '⇅'; display: inline-block; margin-left: 0.3rem; font-size: 0.6rem; vertical-align: middle; opacity: 0.3; }
+    th.sortable:hover::after { opacity: 0.6; }
+    th.sortable.asc::after { content: '▲'; opacity: 1; }
+    th.sortable.desc::after { content: '▼'; opacity: 1; }
+    /* Drag-to-reorder: grabbable header, dimmed while it's the one being
+       dragged, and an accent edge on whichever header it's currently over. */
+    th[data-col] { cursor: grab; }
+    th[data-col]:active { cursor: grabbing; }
+    th[data-col].dragging { opacity: 0.4; }
+    th[data-col].drag-over { box-shadow: inset 2px 0 0 var(--accent), inset -2px 0 0 var(--accent); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #ef4444; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text-muted); }
+    .action-dropdown { position: relative; display: inline-flex; }
+    .split-btn { display: inline-flex; }
+    .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .split-caret {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      border-left: 1px solid rgba(255,255,255,0.2);
+      padding: 0.3rem 0.35rem;
+      font-size: 0.65rem;
+    }
+    /* Fixed, not absolute: the table lives in an overflow:auto scroller, which
+       would clip a menu opened on one of the last rows. Coordinates are set by
+       app.js when the menu opens. */
+    .dropdown-menu {
+      display: none;
+      position: fixed;
+      z-index: 200;
+      min-width: 140px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.25rem 0;
+      margin-top: 2px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    /* Base UI (Menu.Popup / Popover.Popup, both styled via this class)
+       toggles its own [data-open] attribute rather than relying on a
+       manually-toggled ancestor class the way the old vanilla-JS dropdowns
+       did — .action-dropdown.open never existed for these. */
+    .dropdown-menu[data-open] { display: block; }
+    .dropdown-item {
+      display: block;
+      width: 100%;
+      padding: 0.4rem 0.75rem;
+      border: none;
+      background: none;
+      color: var(--text);
+      font-size: 0.8rem;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dropdown-item:hover { background: var(--surface2); }
+    .dropdown-item.danger { color: var(--danger); }
+    .dropdown-item.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar-title { font-weight: 600; font-size: 0.95rem; flex-shrink: 0; }
+    .topbar-center { display: flex; align-items: center; gap: 0.5rem; flex: 1; margin: 0 1rem; min-width: 0; flex-wrap: wrap; }
+    .topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+    .topbar .dropdown-menu form { display: block; }
+    .btn-icon { padding: 0.4rem; line-height: 0; position: relative; }
+    .btn-icon svg { width: 1em; height: 1em; display: block; }
+    /* While running (data-cancel is set): the icon spins in place, and
+       hovering swaps it for a red "cancel" X instead of losing the icon to
+       the word "Cancel" the way a text button does. */
+    .btn-icon .icon-cancel { display: none; }
+    .btn-icon[data-cancel] .icon-refresh { animation: spin 1s linear infinite; }
+    .btn-icon[data-cancel]:hover .icon-refresh { display: none; }
+    .btn-icon[data-cancel]:hover .icon-cancel { display: block; color: var(--danger); }
+    .dropdown-item.checkbox-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .dropdown-item.checkbox-item input { margin: 0; }
+    /* Menu.CheckboxItem (the Columns menu) has no native input — Base UI
+       toggles [data-checked] on the item itself instead, so the check mark
+       has to come from CSS. FacetedFilter's plain <input type=checkbox>
+       items keep their own native box via the rule above. */
+    .dropdown-item.checkbox-item[role="menuitemcheckbox"]::before {
+      content: "";
+      width: 0.9rem;
+      height: 0.9rem;
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--bg);
+    }
+    .dropdown-item.checkbox-item[data-checked]::before {
+      background: var(--accent);
+      border-color: var(--accent);
+      background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M13.5 4.5l-7 7L3 8' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+      background-size: 0.7rem;
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+    .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+    .settings-header h1 { margin-bottom: 0; }
+    body.has-topbar .library-layout { height: calc(100vh - 7.5rem); }
+    #toast-region {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      font-size: 0.85rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .toast.error { border-left-color: var(--danger); }
+
+    .auth-wrap { max-width: 420px; margin: 3rem auto; }
+    .settings-wrap { width: 100%; margin: 0.5rem 0 3rem; }
+    .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+    .tab {
+      background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 0.6rem 1rem; font-size: 0.9rem; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; transition: color 0.15s, border-color 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .tab-panel[hidden] { display: none; }
+    .auth-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .auth-card h2 { margin-bottom: 1rem; }
+    .auth-card form, .auth-card .field-stack { display: flex; flex-direction: column; gap: 0.6rem; }
+    .auth-card .user-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+    .auth-card .user-row form { flex-direction: row; flex: 1; }
+    .auth-card .user-row input[type=password] { flex: 1; }
+    .auth-card input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; outline: none; }
+    .auth-card input:focus { border-color: var(--accent); }
+    .auth-card input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--surface2); }
+    .auth-card label { font-size: 0.8rem; color: var(--text-muted); }
+    .auth-card .hint { font-size: 0.75rem; color: var(--text-muted); }
+    .auth-error { color: var(--danger); margin-bottom: 1rem; font-size: 0.9rem; }
+    .auth-card .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
+    .auth-card .checkbox-row input { width: auto; }
+    .auth-card .checkbox-row label { font-size: 0.85rem; color: var(--text); }
+    .auth-card select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+    .auth-card .steps { margin: 0 0 0.75rem 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+    .auth-card .steps li { list-style: decimal; }
+    .auth-card a { color: var(--accent); }
+    .auth-card code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; }
+    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .build-line { margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
+    .btn-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .quality-section label:not(:first-child) { margin-top: 0.4rem; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.4rem; }
+    .setting-row label { margin: 0; }
+    /* Sliding toggle: a real checkbox, visually hidden, driving a track+thumb
+       sibling via :checked — stays a native, keyboard- and screen-reader-
+       accessible control, just repainted. */
+    .switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+    .switch input {
+      position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; padding: 0;
+    }
+    .switch-track {
+      width: 2.25rem; height: 1.25rem; background: var(--border); border-radius: 999px;
+      position: relative; transition: background 0.15s;
+    }
+    .switch-thumb {
+      position: absolute; top: 2px; left: 2px; width: 1.05rem; height: 1.05rem;
+      background: #fff; border-radius: 50%; transition: transform 0.15s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+    .switch input:checked + .switch-track { background: var(--accent); }
+    .switch input:checked + .switch-track .switch-thumb { transform: translateX(1rem); }
+    .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .format-section { margin-top: 0.6rem; }
+    .format-section label { display: block; margin-bottom: 0.3rem; }
+    #directory-rows, #filename-row { display: flex; flex-direction: column; gap: 0.4rem; }
+    .format-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.4rem 0.5rem;
+    }
+    .format-row-main { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; }
+    .format-row-grip { cursor: grab; color: var(--text-muted); font-size: 0.9rem; user-select: none; line-height: 1; }
+    .format-row-grip:active { cursor: grabbing; }
+    .format-blocks {
+      display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1; min-width: 0; min-height: 1.6rem; align-items: center;
+      background: var(--surface); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 0.25rem 0.4rem;
+    }
+    .format-chip {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.15rem 0.4rem; font-size: 0.8rem; cursor: grab;
+    }
+    .format-chip:active { cursor: grabbing; }
+    .format-chip.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+    .format-chip-label { white-space: nowrap; }
+    .format-chip-text .chip-text-input {
+      background: transparent; border: none; padding: 0; font-size: 0.8rem;
+      color: var(--text); outline: none; width: auto;
+    }
+    .chip-remove {
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 0.85rem; line-height: 1; padding: 0;
+    }
+    .chip-remove:hover { color: var(--danger); }
+    .format-row-controls {
+      display: flex; align-items: center; gap: 0.3rem; flex-shrink: 0;
+      margin-left: auto; padding-left: 0.5rem; border-left: 1px solid var(--border);
+    }
+    .format-add-tag { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.8rem; padding: 0.25rem 0.4rem; }
+    .format-preview {
+      font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 0.85rem; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.6rem 0.75rem; word-break: break-word;
+    }
+    .danger-zone { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+    .danger-zone h2 { color: var(--danger); }
+
+/* --- Additions for the React client: Base UI structural elements and new
+   controls (column filter popovers, confirm dialog) that the ported CSS
+   above has no rules for yet. --- */
+
+.th-inner { cursor: inherit; display: inline-block; }
+.th-filter-btn {
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  font-size: 0.65rem; margin-left: 0.25rem; padding: 0 0.15rem; vertical-align: middle;
+}
+.th-filter-btn:hover, .th-filter-btn.active { color: var(--accent); }
+
+.column-filter-popup { min-width: 200px; max-width: 280px; padding: 0.5rem; }
+.column-filter-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; }
+.column-filter-range { display: flex; flex-direction: column; gap: 0.5rem; }
+.column-filter-range label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--text-muted); }
+.column-filter-range input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+.column-filter-text {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 0.35rem 0.5rem; font-size: 0.85rem; width: 100%;
+}
+
+.confirm-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 300; }
+.confirm-popup {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 301; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1.25rem; width: min(400px, calc(100vw - 2rem));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* Popover/Menu positioners are portaled, unstyled wrappers — only the popup
+   inside needs presentation, reusing .dropdown-menu from the ported CSS. */

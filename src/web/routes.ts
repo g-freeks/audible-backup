@@ -27,7 +27,6 @@ import {
   wasCancelled,
 } from "../operations.ts";
 import { sseStream, sseJsonStream } from "./sse.ts";
-import { booksPage } from "./templates/books.ts";
 import { loginPage, settingsPage, type AudibleStatus } from "./templates/user.ts";
 import { runHelper, HelperUnavailableError } from "../pyhelper.ts";
 import {
@@ -258,10 +257,34 @@ routes.use("*", async (c, next) => {
   return next();
 });
 
-routes.get("/login", (c) => {
-  const preselect = c.req.query("user");
-  return c.html(loginPage(userListEntries(), undefined, preselect));
-});
+const FAVICON =
+  "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
+  "<path d='M3 5c0 0 4-2 13 2v22c-9-4-13-2-13-2V5z' fill='%236c8cff'/>" +
+  "<path d='M29 5c0 0-4-2-13 2v22c9-4 13-2 13-2V5z' fill='%238ba4ff'/></svg>";
+
+/** The React client's shell — served for every app route (/, /login,
+ * /user/settings). No inline script: the CSP is script-src 'self' with no
+ * nonce, so all behavior lives in the external, committed /static/app.js
+ * bundle (see docs/flatpak-plan.md — Flathub builds can't run a bundler, so
+ * the built bundle ships as a checked-in file). */
+function spaShell(c: Context): Response {
+  return c.html(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audible Backup</title>
+  <link rel="icon" href="${FAVICON}">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>`);
+}
+
+routes.get("/login", (c) => spaShell(c));
 
 routes.post("/user/switch", async (c) => {
   const body = await c.req.parseBody();
@@ -402,7 +425,7 @@ async function renderSettings(
   return status ? c.html(html, status as 400) : c.html(html);
 }
 
-routes.get("/user/settings", (c) => renderSettings(c));
+routes.get("/user/settings", (c) => spaShell(c));
 
 // --- Session / settings state, as JSON (for the SPA) ---
 
@@ -772,15 +795,7 @@ routes.patch("/api/settings", async (c) => {
 
 // --- Pages ---
 
-routes.get("/", (c) => {
-  const paths = requestPaths();
-  const { convertibleAsins, convertedAsins } = computeBookMeta(paths);
-  return c.html(booksPage(convertibleAsins, convertedAsins, buildUserNav(), {
-    autoSync: c.req.query("sync") === "1",
-    operationRunning: currentOperationRunning(),
-    columnPrefs: currentUser()?.columnPrefs,
-  }));
-});
+routes.get("/", (c) => spaShell(c));
 routes.get("/library", (c) => c.redirect("/"));
 routes.get("/convert", (c) => c.redirect("/"));
 

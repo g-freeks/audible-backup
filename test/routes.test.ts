@@ -49,97 +49,22 @@ afterEach(() => {
 
 // --- Pages ---
 
+// The books table, its actions, and every piece of data shown on it are now
+// entirely client-rendered by the React bundle — GET / just serves the SPA
+// shell (see spaShell() in routes.ts). Server-side coverage for what used to
+// be asserted here as HTML now lives on the JSON endpoints the client reads
+// from: GET /api/books (status, ignored-books-included, per-row fields —
+// see "GET /api/books" below) and GET /api/operation (the sync/cancel
+// state). Rendering behavior itself belongs to test/ui/*.test.ts.
 describe("GET /", () => {
-  it("returns 200 with books HTML", async () => {
+  it("serves the SPA shell: external bundle, no inline script, a mount point", async () => {
     const res = await app.request("/");
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.ok(html.includes("books-table") || html.includes("No books in database"));
-  });
-
-  it("shows books in the table", async () => {
-    markDownloaded("B000000001", "Author One", "Book One", "/a.aax");
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes("Book One"));
-    assert.ok(html.includes("Author One"));
-    assert.ok(html.includes("B000000001"));
-  });
-
-  it("shows not-downloaded books with status badge", async () => {
-    upsertBook("B000000001", { author: "Author One", title: "Undownloaded Book" });
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes("Not Downloaded"));
-    assert.ok(html.includes("Undownloaded Book"));
-    assert.ok(html.includes("Author One"));
-    assert.ok(html.includes('id="status-B000000001"'));
-  });
-
-  it("shows checkboxes for not-downloaded books", async () => {
-    upsertBook("B000000001", { author: "A1", title: "T1" });
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes('name="asin"'));
-    assert.ok(html.includes('value="B000000001"'));
-    assert.ok(html.includes('id="select-all"'));
-  });
-
-  it("always offers Download Selected and Download All", async () => {
-    upsertBook("B000000001", { author: "A1", title: "T1" });
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes("Download Selected"));
-    assert.ok(html.includes("Download All"));
-    assert.match(html, /id="download-selected-btn"[^>]*disabled/, "greyed out until something is checked");
-    assert.match(
-      html,
-      /id="download-selected-btn"[^>]*hx-post="\/library\/download-all"/,
-      "fully processes (fetch + convert) like the row Download button, not just a fetch",
-    );
-  });
-
-  it("gives Sync Library both a spinnable icon and a hover-to-cancel icon, not a text label", async () => {
-    const html = await (await app.request("/")).text();
-    const btn = html.match(/<button id="sync-library-btn"[\s\S]*?<\/button>/)?.[0] || "";
-    assert.match(btn, /class="icon-refresh"/, "the refresh icon (spun via CSS while running)");
-    assert.match(btn, /class="icon-cancel"/, "the hover-to-cancel X, hidden until [data-cancel]:hover");
-    assert.ok(!btn.includes(">Sync Library<"), "no visible text label — aria-label carries it instead");
-  });
-
-  it("shows both downloaded and not-downloaded books", async () => {
-    upsertBook("B000000001", { author: "A1", title: "Not Yet" });
-    markDownloaded("B000000002", "A2", "Already Got", "/b.aax");
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes("Not Yet"));
-    assert.ok(html.includes("Already Got"));
-    assert.ok(html.includes("Not Downloaded"));
-    assert.ok(html.includes('>Downloaded<'));
-  });
-
-  it("shows ignored books in the table with Ignored badge", async () => {
-    markDownloaded("B000000001", "A1", "Ignored Book", "/a.aax");
-    ignoreBook("B000000001");
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes("Ignored Book"));
-    assert.ok(html.includes("Unignore"));
-  });
-
-  it("shows ignore buttons for non-ignored not-downloaded books", async () => {
-    upsertBook("B000000001", { author: "A1", title: "T1" });
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(html.includes("/api/ignore/B000000001"));
-    assert.ok(html.includes("Ignore"));
-  });
-
-  it("renders search input without status filter pills", async () => {
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(!html.includes("filter-btn"), "status filter pills were removed");
-    assert.ok(html.includes("search-input"));
+    assert.match(html, /<div id="root">/);
+    assert.match(html, /<script src="\/static\/app\.js" defer><\/script>/);
+    assert.match(html, /<link rel="stylesheet" href="\/static\/app\.css">/);
+    assert.ok(!/<script(?![^>]*src=)/.test(html), "no inline script blocks");
   });
 });
 
@@ -893,8 +818,9 @@ describe("multi-tenant mode", () => {
 
     const withAuth = await app.request("/", { headers: { cookie } });
     assert.equal(withAuth.status, 200);
-    const html = await withAuth.text();
-    assert.match(html, /alice/);
+
+    const session = await (await app.request("/api/session", { headers: { cookie } })).json();
+    assert.equal(session.current, "alice");
   });
 
   it("rejects wrong passwords and accepts correct ones", async () => {
@@ -991,24 +917,18 @@ describe("UI security headers", () => {
   });
 
   it("renders no inline event handlers or script blocks", async () => {
-    markDownloaded("B000000001", "Author", "Book <One>", "/a.aax");
-    ignoreBook("B000000001");
-    markDownloaded("B000000002", "A2", "T2", "/b.aax");
     const res = await app.request("/");
     const html = await res.text();
     assert.ok(!html.includes("onclick="), "no inline onclick handlers");
     assert.ok(!/<script(?![^>]*src=)/.test(html), "no inline script blocks");
     assert.ok(html.includes('src="/static/app.js"'), "loads external app.js");
-    assert.ok(html.includes("data-action-url"), "actions use data attributes");
   });
 
-  it("escapes book titles in the table", async () => {
-    markDownloaded("B000000003", "Author", 'Evil <img src=x onerror=alert(1)> "Book"', "/c.aax");
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.ok(!html.includes("<img src=x"), "raw HTML from title not emitted");
-    assert.ok(html.includes("&lt;img src=x"), "title is escaped");
-  });
+  // Book titles are rendered client-side via React, which escapes text
+  // content by construction (no dangerouslySetInnerHTML anywhere in the
+  // client) — nothing server-side to assert here any more. /api/books
+  // returns the raw, unescaped title as JSON, which is correct: escaping is
+  // the renderer's job, not the API's.
 });
 
 describe("dark-mode form controls", () => {
@@ -1017,73 +937,26 @@ describe("dark-mode form controls", () => {
     // shell's own renderer — included) kept form controls' native-drawn
     // background light even once our own dark-mode colors applied, while
     // still honoring the author's (light-on-dark) text color — unreadable
-    // white-on-white text in selects like the Columns/tag pickers.
-    const html = await (await app.request("/")).text();
-    assert.match(html, /:root\s*\{[^}]*color-scheme:\s*light dark/);
-    assert.match(html, /prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{[^}]*color-scheme:\s*dark/);
+    // white-on-white text in selects like the Columns/tag pickers. Now
+    // shipped in the committed, built stylesheet rather than inline in the
+    // page — /static/* is served by server.ts, outside the routes sub-app
+    // this file tests, so read the built file directly.
+    const css = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "web", "static", "app.css"),
+      "utf8",
+    );
+    assert.match(css, /:root\s*\{[^}]*color-scheme:\s*light dark/);
+    assert.match(css, /prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{[^}]*color-scheme:\s*dark/);
   });
 });
 
 // --- User nav discoverability ---
 
-describe("user navigation", () => {
-  it("legacy mode shows a sign-in / add-user entry point", async () => {
-    const res = await app.request("/");
-    const html = await res.text();
-    assert.match(html, /class="topbar"/, "topbar rendered without users");
-    assert.match(html, /href="\/login"/, "links to the login/add-user page");
-    assert.ok(!html.includes("Sign out"), "no session actions in legacy mode");
-  });
-
-  it("shows the user menu and settings link once signed in", async () => {
-    const add = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "alice" }),
-      redirect: "manual",
-    });
-    const cookie = (add.headers.get("set-cookie") || "").split(";")[0];
-
-    const res = await app.request("/", { headers: { cookie } });
-    const html = await res.text();
-    assert.match(html, /class="topbar"/);
-    assert.match(html, /alice/);
-    assert.match(html, /\/user\/settings/);
-    assert.match(html, /Sign out/);
-  });
-
-  it("keeps the topbar on the settings page", async () => {
-    const add = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "bob" }),
-      redirect: "manual",
-    });
-    const cookie = (add.headers.get("set-cookie") || "").split(";")[0];
-
-    const res = await app.request("/user/settings", { headers: { cookie } });
-    const html = await res.text();
-    assert.match(html, /class="topbar"/);
-    assert.match(html, /bob/);
-  });
-});
-
-describe("activation bytes tooltip", () => {
-  it("explains the field on the add-user form", async () => {
-    const html = await (await app.request("/login")).text();
-    assert.match(html, /id="add-bytes"[^>]*title="[^"]*legacy \.aax[^"]*"/);
-  });
-
-  it("explains the field on the settings page", async () => {
-    const add = await app.request("/user/add", {
-      method: "POST",
-      body: new URLSearchParams({ name: "eve" }),
-      redirect: "manual",
-    });
-    const cookie = (add.headers.get("set-cookie") || "").split(";")[0];
-
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /id="set-bytes"[^>]*title="[^"]*legacy \.aax[^"]*"/);
-  });
-});
+// The topbar, user menu, settings-page nav, and the activation-bytes
+// tooltip text are all client-rendered now (Topbar.tsx, Settings.tsx,
+// Login.tsx) — the session state behind them is already covered by
+// "GET /api/session" and "GET /api/session without a session cookie" above.
+// Rendering itself belongs to test/ui/*.test.ts.
 
 describe("audio quality settings", () => {
   async function signedIn(name: string): Promise<string> {
@@ -1095,21 +968,8 @@ describe("audio quality settings", () => {
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
 
-  it("defaults to mp3/medium with format and quality buttons for a new user", async () => {
-    const cookie = await signedIn("frank");
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-
-    assert.match(html, /btn-primary"[^>]*data-audio-format="mp3"/, "mp3 selected by default");
-    assert.match(html, /btn-primary"[^>]*data-audio-quality="medium"/, "medium selected by default");
-    for (const format of ["mp3", "flac", "aac"]) {
-      assert.match(html, new RegExp(`data-audio-format="${format}"`));
-    }
-    for (const quality of ["low", "medium", "high"]) {
-      assert.match(html, new RegExp(`data-audio-quality="${quality}"`));
-    }
-    assert.match(html, /id="audio-args"[^>]*disabled/, "disabled (and visibly so) until the manual toggle is checked");
-    assert.match(html, /id="audio-presets-data"/);
-  });
+  // Defaults and rendered button states are client-rendered now
+  // (Settings.tsx) — see "GET /api/settings" for the default-state coverage.
 
   it("saves a preset choice (format + quality, no custom override)", async () => {
     const cookie = await signedIn("grace");
@@ -1122,10 +982,6 @@ describe("audio quality settings", () => {
 
     const { getUser } = await import("../src/users.ts");
     assert.deepEqual(getUser("grace")?.audioSettings, { format: "flac", quality: "high" });
-
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /btn-primary"[^>]*data-audio-format="flac"/);
-    assert.match(html, /btn-primary"[^>]*data-audio-quality="high"/);
   });
 
   it("saves a custom ffmpeg args override when the manual toggle is checked", async () => {
@@ -1149,10 +1005,6 @@ describe("audio quality settings", () => {
       customArgs: "-c:a libmp3lame -q:a 0",
     });
 
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /id="audio-custom-toggle"[^>]*checked/);
-    assert.match(html, /id="audio-args"[^>]*value="-c:a libmp3lame -q:a 0"/);
-    assert.ok(!/id="audio-args"[^>]*disabled/.test(html), "editable once a custom override is saved");
   });
 
   it("ignores audio_args when the manual toggle isn't checked", async () => {
@@ -1195,21 +1047,9 @@ describe("output naming settings", () => {
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
 
-  it("renders the default template, the tag catalog, and an empty live preview placeholder", async () => {
-    const cookie = await signedIn("karen");
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-
-    assert.match(html, /id="directory-rows"/);
-    assert.match(html, /id="filename-row"/);
-    assert.match(html, /id="format-preview"/);
-    assert.match(html, /id="output-format-json"[^>]*value='[^']*&quot;title&quot;[^']*'/, "default template (Title-only) embedded");
-    assert.match(html, /data-book-tags="[^"]*Series Entry #[^"]*"/, "the tag catalog is embedded for the client to use");
-
-    const directoryHtml = html.slice(html.indexOf('id="directory-rows"'), html.indexOf('id="add-folder-level"'));
-    const filenameHtml = html.slice(html.indexOf('id="filename-row"'), html.indexOf('id="format-preview"'));
-    assert.ok(!directoryHtml.includes('value="chapterNumber"'), "chapter tags not offered for folder levels");
-    assert.ok(filenameHtml.includes('value="chapterNumber"'), "chapter tags offered for the filename");
-  });
+  // Default template, tag catalog, and preview rendering are client-owned
+  // now (OutputFormatBuilder.tsx) — see "GET /api/settings" for default
+  // outputFormat coverage.
 
   it("saves a valid custom template", async () => {
     const cookie = await signedIn("leo");
@@ -1369,29 +1209,14 @@ describe("PATCH /api/settings", () => {
 
 // --- htmx attribute inheritance regression ---
 
-describe("action buttons are not affected by inherited hx-select", () => {
-  it("keeps hx-select off the container that holds the action buttons", async () => {
-    const res = await app.request("/");
-    const html = await res.text();
-    const container = html.match(/<div class="library-layout"[^>]*>/);
-    assert.ok(container, "library-layout container present");
-    assert.ok(
-      !container[0].includes("hx-select"),
-      "hx-select on the container is inherited by every action button and " +
-        "makes their responses swap in empty content",
-    );
-  });
-
-  it("still wires up the auto-refresh trigger outside that container", async () => {
-    const res = await app.request("/");
-    const html = await res.text();
-    const refresher = html.match(/<div[^>]*hx-trigger="refresh-books from:body"[^>]*>/);
-    assert.ok(refresher, "refresher element present");
-    assert.ok(refresher[0].includes('hx-select=".library-layout"'));
-    assert.ok(refresher[0].includes('hx-target=".library-layout"'));
-  });
-
-  it("sync returns a log panel that references the SSE stream", async () => {
+// hx-select/hx-trigger inheritance no longer applies — there is no htmx in
+// the client any more (see the JSON SSE stream tests under "GET
+// /api/operation/stream" instead). The old /library/sync HTML-fragment
+// route stays functional (unreachable from the UI, kept only for the
+// server-rendered path that will be deleted along with the templates), so
+// its own regression check stays here for now.
+describe("POST /library/sync (legacy HTML fragment route)", () => {
+  it("returns a log panel that references the SSE stream", async () => {
     const res = await app.request("/library/sync", { method: "POST" });
     assert.equal(res.status, 200);
     const html = await res.text();
@@ -1424,10 +1249,10 @@ describe("Audible sign-in flow", () => {
 
   it("offers a connect form when not linked", async () => {
     const cookie = await signedInUser("alice");
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /Connect Audible/);
-    assert.match(html, /\/user\/audible\/start/);
-    assert.match(html, /never sees your password/i);
+    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
+    assert.equal(settings.audible.available, true);
+    assert.equal(settings.audible.linked, false);
+    assert.equal(settings.audible.pending, undefined);
   });
 
   it("step 1 returns the Amazon URL and the paste form", async () => {
@@ -1488,14 +1313,12 @@ describe("Audible sign-in flow", () => {
     assert.equal(res.status, 302);
     assert.ok(res.headers.get("location")?.endsWith("/?sync=1"), "sends the user to an auto-syncing library");
 
-    // The library page picks up the flag and fires the sync request itself.
-    const library = await (await app.request("/?sync=1", { headers: { cookie } })).text();
-    assert.match(library, /hx-post="\/library\/sync"[^>]*hx-trigger="click, load"/);
-
-    // status is read back from the user's own config dir
-    const after = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(after, /Connected/);
-    assert.match(after, /Reconnect/);
+    // status is read back from the user's own config dir — the SPA's
+    // equivalent (POST /api/audible/login-complete answering { ok: true },
+    // then the client triggering sync itself) is covered under "Audible
+    // sign-in flow (JSON)".
+    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
+    assert.equal(settings.audible.linked, true);
   });
 
   it("keeps sign-in state separate per user", async () => {
@@ -1512,9 +1335,8 @@ describe("Audible sign-in flow", () => {
       }),
     });
 
-    const bobHtml = await (await app.request("/user/settings", { headers: { cookie: bob } })).text();
-    assert.match(bobHtml, /Connect Audible/, "bob must still be unlinked");
-    assert.ok(!/badge-success">Connected/.test(bobHtml));
+    const bobSettings = await (await app.request("/api/settings", { headers: { cookie: bob } })).json();
+    assert.equal(bobSettings.audible.linked, false, "bob must still be unlinked");
   });
 
   it("cancel clears a pending sign-in", async () => {
@@ -1529,13 +1351,12 @@ describe("Audible sign-in flow", () => {
     assert.match(html, /Connect Audible/);
   });
 
-  it("explains what to do when an external helper will not start", async () => {
+  it("reports the helper as unavailable when it will not start", async () => {
     // Only reachable via AUDIBLE_HELPER; the built-in client is always there.
     process.env.FAKE_HELPER_MODE = "missing";
     const cookie = await signedInUser("alice");
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /AUDIBLE_HELPER/);
-    assert.ok(!/quickstart/.test(html), "must not point at audible quickstart");
+    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
+    assert.equal(settings.audible.available, false);
     delete process.env.FAKE_HELPER_MODE;
   });
 });
@@ -1693,63 +1514,16 @@ describe("POST /open-output", () => {
   });
 });
 
-describe("row actions are unambiguous", () => {
-  it("uses one Download action for every un-converted state", async () => {
-    upsertBook("B0STATE0001", { author: "A", title: "Not downloaded yet" });
-    markDownloaded("B0STATE0002", "A", "Downloaded only", "/x.aaxc");
-    const html = await (await app.request("/")).text();
-
-    assert.equal((html.match(/>Download</g) || []).length, 2, "one per row");
-    assert.match(html, /hx-post="\/prepare\/B0STATE0001"/);
-    assert.match(html, /hx-post="\/prepare\/B0STATE0002"/);
-  });
-
-  it("links converted books straight at the ZIP with the same label", async () => {
-    markDownloaded("B0STATE0003", "A", "Done", "/x.aaxc");
-    markBookConverted("Done");
-    const html = await (await app.request("/")).text();
-    assert.match(html, /href="\/download\/converted\/B0STATE0003"[^>]*>Download</);
-  });
-
-  it("names the Audible-side actions distinctly", async () => {
-    markDownloaded("B0STATE0004", "A", "Fetched", "/x.aaxc");
-    const html = await (await app.request("/")).text();
-    assert.match(html, /Save original AAX/);
-    assert.match(html, /Fetch again from Audible/);
-  });
-});
+// Row action labels/wiring are entirely client-rendered now
+// (table/RowActions.tsx implements the same one-action-per-status mapping
+// the old actionButtons() in books.ts had) — no server HTML to assert
+// against any more. Covered by test/ui/*.test.ts.
 
 // --- Layout tweaks and database reset ---
 
-describe("books table layout", () => {
-  it("drops the redundant page heading", async () => {
-    const html = await (await app.request("/")).text();
-    assert.ok(!/<h1>Books<\/h1>/.test(html), "single-page app needs no 'Books' heading");
-  });
-
-  it("constrains the author column and keeps the full value reachable", async () => {
-    const longAuthor = "Wolfgang Amadeus Hieronymus Bartholomew Featherstonehaugh III";
-    markDownloaded("B0LONGAUTH", longAuthor, "Some Book", "/x.aaxc");
-    const html = await (await app.request("/")).text();
-    assert.match(html, /<th class="sortable col-author"/);
-    assert.match(html, new RegExp(`<td class="col-author"[^>]*title="${longAuthor}"`));
-  });
-
-  it("makes every data column draggable, keyed for reordering rather than by a static index", async () => {
-    markDownloaded("B0DRAGCOL1", "A", "Draggable Columns", "/x.aaxc");
-    const html = await (await app.request("/")).text();
-    // Sorting reads the header's live position (th.cellIndex) so it survives
-    // a drag reorder — a stale data-sort-col index would silently break it.
-    assert.ok(!html.includes("data-sort-col"), "no baked-in column index left to go stale after a drag");
-    for (const key of ["title", "series", "author", "narrator", "asin", "status", "downloaded", "purchased", "released", "runtime", "format", "language", "chapters"]) {
-      assert.match(html, new RegExp(`<th class="sortable[^"]*" data-col="${key}" draggable="true"`), `${key} header is draggable`);
-    }
-    // Checkbox and Actions are structural, not data columns — no attributes
-    // at all on their <th>, so this only holds if neither is draggable.
-    assert.ok(html.includes('<th><input type="checkbox" id="select-all"'), "checkbox column has no extra attributes");
-    assert.ok(html.includes("<th>Actions</th>"), "Actions column has no extra attributes");
-  });
-});
+// Table layout (column classes, draggable headers) is entirely
+// client-rendered now (table/BooksTable.tsx, using TanStack Table's column
+// order state rather than a baked-in index) — covered by test/ui/*.test.ts.
 
 describe("POST /api/column-prefs", () => {
   async function signedIn(name: string): Promise<string> {
@@ -1761,7 +1535,7 @@ describe("POST /api/column-prefs", () => {
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
 
-  it("saves the signed-in user's column prefs, readable back from the books page", async () => {
+  it("saves the signed-in user's column prefs", async () => {
     const cookie = await signedIn("alice");
     const res = await app.request("/api/column-prefs", {
       method: "POST",
@@ -1770,9 +1544,8 @@ describe("POST /api/column-prefs", () => {
     });
     assert.equal(res.status, 204);
 
-    const html = await (await app.request("/", { headers: { cookie } })).text();
-    assert.match(html, /id="column-prefs-data"[^>]*data-hidden="asin,format"/);
-    assert.match(html, /data-order="title,series"/);
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("alice")?.columnPrefs, { hidden: ["asin", "format"], order: ["title", "series"] });
   });
 
   it("no-ops in legacy mode (no signed-in user to attach it to)", async () => {
@@ -1803,9 +1576,8 @@ describe("POST /api/column-prefs", () => {
     });
     assert.equal(res.status, 204);
 
-    const html = await (await app.request("/", { headers: { cookie } })).text();
-    assert.match(html, /data-hidden="asin"/);
-    assert.match(html, /data-order=""/);
+    const { getUser } = await import("../src/users.ts");
+    assert.deepEqual(getUser("carol")?.columnPrefs, { hidden: ["asin"], order: [] });
   });
 
   it("keeps each user's saved prefs separate", async () => {
@@ -1818,8 +1590,8 @@ describe("POST /api/column-prefs", () => {
       body: JSON.stringify({ hidden: ["asin"], order: [] }),
     });
 
-    const bobHtml = await (await app.request("/", { headers: { cookie: bob } })).text();
-    assert.match(bobHtml, /data-hidden=""/, "a different user sees no saved prefs");
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("erin")?.columnPrefs, undefined, "a different user sees no saved prefs");
   });
 });
 
@@ -1922,13 +1694,9 @@ describe("POST /user/reset-db", () => {
     return (res.headers.get("set-cookie") || "").split(";")[0];
   }
 
-  it("offers the reset with a confirmation prompt on the settings page", async () => {
-    const cookie = await signedIn("alice");
-    const html = await (await app.request("/user/settings", { headers: { cookie } })).text();
-    assert.match(html, /action="\/user\/reset-db"/);
-    assert.match(html, /data-confirm="[^"]*Reset the library database/);
-    assert.match(html, /Files on disk are kept|files on disk are kept/i);
-  });
+  // The confirmation prompt is client-rendered now (Settings.tsx's danger
+  // zone uses useConfirm() instead of a data-confirm form attribute) —
+  // covered by test/ui/*.test.ts.
 
   it("clears that user's library only", async () => {
     const alice = await signedIn("alice");

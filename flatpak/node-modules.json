@@ -8,15 +8,15 @@
   "sources": [
     {
       "type": "archive",
-      "url": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.9.tgz",
-      "sha512": "bc72fac3779c66c932fbc3f9303f9e15f6864f209e387508158306a5019bac14d298d368c6fd227faf6b119e608aedfac1e0b9b1a16ece72f8d758115fb6c90f",
+      "url": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.17.tgz",
+      "sha512": "7529de4b9aa189ab995860c278ae28ebde5777d9d4363be249908c42b8f5d1e7adafc5259f5b9c9fa6dba6138ce94ca700c32d348cd9352a4bf6f9c0489c2b3d",
       "dest": "node_modules/@hono/node-server",
       "strip-components": 1
     },
     {
       "type": "archive",
-      "url": "https://registry.npmjs.org/hono/-/hono-4.11.9.tgz",
-      "sha512": "11ac3661318ce963b103a0976dc91a12fb25af635ee0d16c2abbdcd2ff7b243e5ac1b99e04b3b9c3d1e8f4bf6498aa27af017d449956e81c53d4f56ffda8011d",
+      "url": "https://registry.npmjs.org/hono/-/hono-4.13.5.tgz",
+      "sha512": "3bafbf782611933cf3cb4acf5b028b886051d6716e50f6729e7c23c4dd4c040eb634da9b4f4c101334322b68123b9c83203077dfab1742578084e1ebce56322b",
       "dest": "node_modules/hono",
       "strip-components": 1
     }
