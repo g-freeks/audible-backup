@@ -416,10 +416,8 @@ routes.get("/api/session", (c) => {
   });
 });
 
-routes.get("/api/settings", async (c) => {
-  const user = currentUser();
-  if (!user) return c.json({ error: "Unauthorized" }, 401);
-  return c.json({
+async function settingsState(user: NonNullable<ReturnType<typeof currentUser>>) {
+  return {
     userName: user.name,
     activationBytes: user.activationBytes || "",
     hasPassword: userHasPassword(user),
@@ -428,7 +426,13 @@ routes.get("/api/settings", async (c) => {
     audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
     outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
     version: versionLine(),
-  });
+  };
+}
+
+routes.get("/api/settings", async (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  return c.json(await settingsState(user));
 });
 
 // --- Audible sign-in (two steps; the password is entered on Audible's site) ---
@@ -545,6 +549,100 @@ routes.post("/user/audible/cancel", (c) => {
   return renderSettings(c);
 });
 
+// --- JSON equivalents, for the SPA ---
+
+routes.post("/api/audible/login-url", async (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // marketplace defaults below when the body is empty/absent
+  }
+  const marketplace =
+    typeof (body as { marketplace?: unknown } | null)?.marketplace === "string"
+      ? (body as { marketplace: string }).marketplace
+      : "de";
+
+  try {
+    const done = await runHelper(["login-url", marketplace]);
+    if (!done.ok) {
+      return c.json({ error: done.message || "Could not start sign-in" }, 400);
+    }
+    setPendingLogin(user.name, {
+      marketplace: String(done.marketplace || marketplace),
+      serial: String(done.serial),
+      codeVerifier: String(done.code_verifier),
+      url: String(done.url),
+    });
+    return c.json({ url: String(done.url), marketplace: String(done.marketplace || marketplace) });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Could not start sign-in: ${msg}` }, 400);
+  }
+});
+
+routes.post("/api/audible/login-complete", async (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+  const pending = getPendingLogin(user.name);
+  if (!pending) return c.json({ error: "Sign-in expired — please start again." }, 400);
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const redirectUrl =
+    typeof (body as { redirectUrl?: unknown } | null)?.redirectUrl === "string"
+      ? (body as { redirectUrl: string }).redirectUrl.trim()
+      : "";
+  if (!/^https?:\/\//i.test(redirectUrl)) {
+    return c.json({ error: "Paste the full address, including https://" }, 400);
+  }
+
+  try {
+    const done = await runHelper([
+      "login-complete",
+      pending.marketplace,
+      pending.serial,
+      pending.codeVerifier,
+      redirectUrl,
+    ]);
+    if (!done.ok) {
+      return c.json({ error: done.message || "Sign-in failed" }, 400);
+    }
+    clearPendingLogin(user.name);
+    // Unlike the form route's ?sync=1 redirect trick, the SPA just calls the
+    // sync endpoint itself once this resolves.
+    return c.json({ ok: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Sign-in failed: ${msg}` }, 400);
+  }
+});
+
+routes.delete("/api/audible/pending", (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  clearPendingLogin(user.name);
+  return c.body(null, 204);
+});
+
+routes.post("/api/library/reset", (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (isOperationRunning()) {
+    return c.json({ error: "An operation is running — wait for it to finish first." }, 409);
+  }
+  resetDatabase();
+  return c.body(null, 204);
+});
+
 const VALID_TAG_KEYS = new Set([...BOOK_TAGS, ...CHAPTER_TAGS].map((t) => t.key));
 const CHAPTER_TAG_KEYS = new Set(CHAPTER_TAGS.map((t) => t.key));
 
@@ -567,13 +665,11 @@ function parseFormatRow(raw: unknown, allowChapterTags: boolean): FormatRow | nu
   return row;
 }
 
-function parseOutputFormat(raw: string): OutputFormat | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return null;
-  }
+/** The shared validator: a tag allowlist, 30 segments/row, 10 directory
+ * rows, 200-char text — used by both the form-encoded route below and
+ * PATCH /api/settings, which passes the object directly instead of a JSON
+ * string. */
+function parseOutputFormatObject(data: unknown): OutputFormat | null {
   if (!data || typeof data !== "object") return null;
   const record = data as Record<string, unknown>;
   if (!Array.isArray(record.directory)) return null;
@@ -586,6 +682,16 @@ function parseOutputFormat(raw: string): OutputFormat | null {
   const filename = parseFormatRow(record.filename, true);
   if (!filename) return null;
   return { directory, filename };
+}
+
+function parseOutputFormat(raw: string): OutputFormat | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return parseOutputFormatObject(data);
 }
 
 routes.post("/user/settings", async (c) => {
@@ -617,6 +723,49 @@ routes.post("/user/settings", async (c) => {
   }
 
   return renderSettings(c, { message: "Settings saved" });
+});
+
+routes.patch("/api/settings", async (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const record = body as Record<string, unknown> | null;
+  if (!record || typeof record !== "object") return c.json({ error: "Invalid JSON" }, 400);
+
+  updateUser(user.name, {
+    activationBytes: typeof record.activationBytes === "string" ? record.activationBytes : "",
+    password: typeof record.password === "string" && record.password ? record.password : undefined,
+    removePassword: record.removePassword === true,
+  });
+
+  const format = record.audioFormat;
+  const quality = record.audioQuality;
+  if (isAudioFormat(format) && isAudioQuality(quality)) {
+    const customArgs = typeof record.audioArgs === "string" ? record.audioArgs.trim() : "";
+    setAudioSettings(user.name, {
+      format,
+      quality,
+      ...(record.audioCustomEnabled === true && customArgs ? { customArgs } : {}),
+    });
+  }
+
+  if (record.outputFormat !== undefined) {
+    const parsed = parseOutputFormatObject(record.outputFormat);
+    if (!parsed) return c.json({ error: "Invalid output format" }, 400);
+    setOutputFormat(user.name, parsed);
+  }
+
+  // Mutations above went through their own listUsers() reads, so the `user`
+  // captured before them is stale — refetch for the response.
+  const updated = currentUser();
+  if (!updated) return c.json({ error: "Unauthorized" }, 401);
+  return c.json(await settingsState(updated));
 });
 
 // --- Pages ---

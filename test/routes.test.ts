@@ -1173,6 +1173,77 @@ describe("output naming settings", () => {
   });
 });
 
+describe("PATCH /api/settings", () => {
+  async function signedIn(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    const setCookie = res.headers.get("set-cookie") || "";
+    return setCookie.split(";")[0];
+  }
+
+  it("requires a session", async () => {
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ activationBytes: "beef" }),
+    });
+    assert.equal(res.status, 401);
+  });
+
+  it("saves activation bytes, audio settings and output format, and returns the updated state", async () => {
+    const cookie = await signedIn("kevin");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        activationBytes: "cafef00d",
+        audioFormat: "flac",
+        audioQuality: "high",
+        outputFormat: {
+          directory: [[{ type: "tag", value: "author" }]],
+          filename: [{ type: "tag", value: "chapterName" }],
+        },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.activationBytes, "cafef00d");
+    assert.deepEqual(data.audioSettings, { format: "flac", quality: "high" });
+    assert.deepEqual(data.outputFormat, {
+      directory: [[{ type: "tag", value: "author" }]],
+      filename: [{ type: "tag", value: "chapterName" }],
+    });
+
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("kevin")?.activationBytes, "cafef00d");
+  });
+
+  it("rejects a malformed output format instead of silently dropping it", async () => {
+    const cookie = await signedIn("laura");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputFormat: { directory: "not-an-array" } }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("ignores an invalid format/quality instead of saving garbage", async () => {
+    const cookie = await signedIn("mallory");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ audioFormat: "wav", audioQuality: "ultra" }),
+    });
+    assert.equal(res.status, 200);
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("mallory")?.audioSettings, undefined);
+  });
+});
+
 // --- htmx attribute inheritance regression ---
 
 describe("action buttons are not affected by inherited hx-select", () => {
@@ -1343,6 +1414,121 @@ describe("Audible sign-in flow", () => {
     assert.match(html, /AUDIBLE_HELPER/);
     assert.ok(!/quickstart/.test(html), "must not point at audible quickstart");
     delete process.env.FAKE_HELPER_MODE;
+  });
+});
+
+describe("Audible sign-in flow (JSON)", () => {
+  const FAKE_HELPER = `python3 ${path.resolve(import.meta.dirname, "resources", "fake_helper.py")}`;
+
+  async function signedInUser(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  beforeEach(() => {
+    process.env.AUDIBLE_HELPER = FAKE_HELPER;
+  });
+
+  afterEach(() => {
+    delete process.env.AUDIBLE_HELPER;
+  });
+
+  it("step 1 returns the Amazon URL as JSON", async () => {
+    const cookie = await signedInUser("alice");
+    const res = await app.request("/api/audible/login-url", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ marketplace: "de" }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.match(data.url, /amazon\.de\/ap\/signin/);
+    assert.equal(data.marketplace, "de");
+  });
+
+  it("rejects a pasted value without an authorization code", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/api/audible/login-url", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ marketplace: "de" }),
+    });
+    const res = await app.request("/api/audible/login-complete", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ redirectUrl: "https://www.audible.de/" }),
+    });
+    assert.equal(res.status, 400);
+    const data = await res.json();
+    assert.match(data.error, /authorization code/i);
+  });
+
+  it("completes sign-in and reports { ok: true } (no ?sync=1 redirect trick)", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/api/audible/login-url", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ marketplace: "de" }),
+    });
+    const res = await app.request("/api/audible/login-complete", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ redirectUrl: "https://www.audible.de/?openid.oa2.authorization_code=ABC123" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true });
+
+    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
+    assert.equal(settings.audible.linked, true);
+  });
+
+  it("DELETE /api/audible/pending cancels a pending sign-in", async () => {
+    const cookie = await signedInUser("alice");
+    await app.request("/api/audible/login-url", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ marketplace: "de" }),
+    });
+    const res = await app.request("/api/audible/pending", { method: "DELETE", headers: { cookie } });
+    assert.equal(res.status, 204);
+
+    const settings = await (await app.request("/api/settings", { headers: { cookie } })).json();
+    assert.equal(settings.audible.pending, undefined);
+  });
+});
+
+describe("POST /api/library/reset", () => {
+  async function signedInUser(name: string): Promise<string> {
+    const res = await app.request("/user/add", {
+      method: "POST",
+      body: new URLSearchParams({ name }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("requires a session", async () => {
+    const res = await app.request("/api/library/reset", { method: "POST" });
+    assert.equal(res.status, 401);
+  });
+
+  it("clears the library and answers 204", async () => {
+    const cookie = await signedInUser("alice");
+    const res = await app.request("/api/library/reset", { method: "POST", headers: { cookie } });
+    assert.equal(res.status, 204);
+  });
+
+  it("refuses (409) while an operation is running", async () => {
+    const cookie = await signedInUser("alice");
+    startOperation("sync");
+    const res = await app.request("/api/library/reset", { method: "POST", headers: { cookie } });
+    assert.equal(res.status, 409);
+    const data = await res.json();
+    assert.ok(data.error);
   });
 });
 
