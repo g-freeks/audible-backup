@@ -7,7 +7,7 @@ import { useConfirm } from "../components/ConfirmDialog.tsx";
 import { useSession } from "../SessionContext.tsx";
 import { useOperationContext } from "../OperationContext.tsx";
 import { api, ApiRequestError } from "../api.ts";
-import type { AudibleStatus, AudioFormat, AudioQuality, SettingsState } from "../types.ts";
+import type { AudibleStatus, AudioFormat, AudioQuality, SettingsState, StorageStats } from "../types.ts";
 import { AUDIO_FORMATS, AUDIO_QUALITIES, AUDIO_PRESETS, audioArgsString, DEFAULT_AUDIO_SETTINGS, DEFAULT_OUTPUT_FORMAT } from "../types.ts";
 import { OutputFormatBuilder } from "./OutputFormatBuilder.tsx";
 
@@ -32,6 +32,18 @@ const MARKETPLACES: [string, string][] = [
 
 const FORMAT_LABELS: Record<AudioFormat, string> = { mp3: "MP3", flac: "FLAC", aac: "AAC" };
 const QUALITY_LABELS: Record<AudioQuality, string> = { low: "Low", medium: "Medium", high: "High" };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
 
 function AudibleCard({
   audible,
@@ -155,6 +167,13 @@ export function SettingsPage() {
   const [audioArgs, setAudioArgs] = React.useState("");
   const [outputFormat, setOutputFormat] = React.useState(DEFAULT_OUTPUT_FORMAT);
   const [message, setMessage] = React.useState<string | null>(null);
+  const [storage, setStorage] = React.useState<StorageStats | null>(null);
+
+  const loadStorage = React.useCallback(() => {
+    api.debug.storage().then(setStorage).catch(() => {});
+  }, []);
+
+  React.useEffect(loadStorage, [loadStorage]);
 
   const load = React.useCallback(() => {
     api.settings
@@ -252,6 +271,24 @@ export function SettingsPage() {
       toast("Library database reset. Files on disk were kept.");
     } catch (err) {
       toast(err instanceof ApiRequestError ? err.message : "Could not reset the database", true);
+    }
+  };
+
+  const clearDownloadCache = async () => {
+    const size = storage ? ` (currently ${formatBytes(storage.downloadCache.bytes)})` : "";
+    if (
+      !(await confirm(
+        `Delete every raw download${size}? Already-converted books are unaffected. Anything not yet converted will need to be downloaded again.`,
+      ))
+    ) {
+      return;
+    }
+    try {
+      const { freedBytes } = await api.debug.clearDownloadCache();
+      toast(`Download cache cleared — freed ${formatBytes(freedBytes)}.`);
+      loadStorage();
+    } catch (err) {
+      toast(err instanceof ApiRequestError ? err.message : "Could not clear the download cache", true);
     }
   };
 
@@ -416,6 +453,38 @@ export function SettingsPage() {
             </Tabs.Panel>
 
             <Tabs.Panel className="tab-panel" value="debug">
+              <div className="auth-card">
+                <h2>Storage</h2>
+                {storage ? (
+                  <ul className="hint" style={{ margin: 0, paddingLeft: "1.2em" }}>
+                    <li>
+                      Download cache: {formatBytes(storage.downloadCache.bytes)} in{" "}
+                      {storage.downloadCache.fileCount} file{storage.downloadCache.fileCount === 1 ? "" : "s"} —{" "}
+                      <code>{storage.downloadCache.path}</code>
+                    </li>
+                    <li>
+                      Converted audiobooks: {formatBytes(storage.converted.bytes)} in{" "}
+                      {storage.converted.fileCount} file{storage.converted.fileCount === 1 ? "" : "s"} —{" "}
+                      <code>{storage.converted.path}</code>
+                    </li>
+                  </ul>
+                ) : (
+                  <p className="hint">Loading…</p>
+                )}
+              </div>
+
+              <div className="auth-card danger-zone">
+                <h2>Clear download cache</h2>
+                <p className="hint">
+                  Raw .aax/.aaxc downloads are kept on disk after conversion and nothing prunes them — this can grow
+                  without bound over time. <strong>Already-converted books are unaffected</strong>; anything not yet
+                  converted goes back to &quot;not downloaded&quot; and will be fetched again on the next sync.
+                </p>
+                <button className="btn btn-danger" type="button" onClick={clearDownloadCache}>
+                  Clear download cache
+                </button>
+              </div>
+
               <div className="auth-card danger-zone">
                 <h2>Reset library database</h2>
                 <p className="hint">

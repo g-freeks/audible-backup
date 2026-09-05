@@ -3,7 +3,7 @@ import { config } from "../config.ts";
 
 import * as fs from "fs";
 import * as path from "path";
-import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, getAllBooks } from "../db.ts";
+import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, clearDownloadCache, getAllBooks } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
 import {
   Converter,
@@ -567,6 +567,61 @@ routes.post("/api/library/reset", (c) => {
   }
   resetDatabase();
   return c.body(null, 204);
+});
+
+/** Total size and file count of everything under `dir`; zero if it doesn't exist. */
+function dirStats(dir: string): { bytes: number; fileCount: number } {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { recursive: true, withFileTypes: true });
+  } catch {
+    return { bytes: 0, fileCount: 0 };
+  }
+  let bytes = 0;
+  let fileCount = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    fileCount++;
+    try {
+      bytes += fs.statSync(path.join(entry.parentPath, entry.name)).size;
+    } catch {
+      // removed concurrently — fine to undercount
+    }
+  }
+  return { bytes, fileCount };
+}
+
+// The download cache (raw .aax/.aaxc + chapter/cover sidecars) is meant to be
+// disposable once a book is converted, but nothing prunes it automatically —
+// it only ever grows, invisibly, inside the app's own data directory (in the
+// Flatpak, that's the sandboxed XDG data dir a user won't normally browse).
+routes.get("/api/debug/storage", (c) => {
+  const paths = requestPaths();
+  return c.json({
+    downloadCache: { path: paths.targetDir, ...dirStats(paths.targetDir) },
+    converted: { path: paths.outputDir, ...dirStats(paths.outputDir) },
+  });
+});
+
+routes.post("/api/debug/clear-download-cache", (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (isOperationRunning()) {
+    return c.json({ error: "An operation is running — wait for it to finish first." }, 409);
+  }
+  const paths = requestPaths();
+  const before = dirStats(paths.targetDir);
+  try {
+    fs.rmSync(paths.targetDir, { recursive: true, force: true });
+    fs.mkdirSync(paths.targetDir, { recursive: true });
+  } catch {
+    return c.json({ error: "Could not clear the download cache" }, 500);
+  }
+  // Already-converted books stay converted (findConvertedChapters doesn't
+  // touch the aax file); anything not yet converted just goes back to
+  // "not downloaded" instead of pointing at a file that no longer exists.
+  clearDownloadCache();
+  return c.json({ freedBytes: before.bytes });
 });
 
 /**

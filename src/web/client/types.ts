@@ -109,6 +109,17 @@ export interface ApiError {
   error: string;
 }
 
+export interface DirStorageStats {
+  path: string;
+  bytes: number;
+  fileCount: number;
+}
+
+export interface StorageStats {
+  downloadCache: DirStorageStats;
+  converted: DirStorageStats;
+}
+
 export const AUDIO_FORMATS: AudioFormat[] = ["mp3", "flac", "aac"];
 export const AUDIO_QUALITIES: AudioQuality[] = ["low", "medium", "high"];
 

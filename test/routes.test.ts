@@ -1159,6 +1159,104 @@ describe("POST /api/library/reset", () => {
   });
 });
 
+describe("GET /api/debug/storage", () => {
+  async function signedInUser(name: string): Promise<string> {
+    const res = await app.request("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("reports byte and file counts for the download cache and converted dirs", async () => {
+    const { userDirs } = await import("../src/users.ts");
+    const cookie = await signedInUser("alice");
+    const dirs = userDirs("alice");
+    fs.mkdirSync(dirs.targetDir, { recursive: true });
+    fs.writeFileSync(path.join(dirs.targetDir, "book.aaxc"), "12345");
+
+    const res = await app.request("/api/debug/storage", { headers: { cookie } });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.downloadCache.bytes, 5);
+    assert.equal(data.downloadCache.fileCount, 1);
+    assert.equal(data.downloadCache.path, dirs.targetDir);
+    assert.equal(data.converted.bytes, 0);
+  });
+
+  it("is zero for a directory that doesn't exist yet", async () => {
+    const cookie = await signedInUser("alice");
+    const res = await app.request("/api/debug/storage", { headers: { cookie } });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.downloadCache.fileCount, 0);
+  });
+});
+
+describe("POST /api/debug/clear-download-cache", () => {
+  async function signedInUser(name: string): Promise<string> {
+    const res = await app.request("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    return (res.headers.get("set-cookie") || "").split(";")[0];
+  }
+
+  it("requires a session", async () => {
+    const res = await app.request("/api/debug/clear-download-cache", { method: "POST" });
+    assert.equal(res.status, 401);
+  });
+
+  it("deletes files, reports freed bytes, and un-marks not-yet-converted books", async () => {
+    const { userDirs } = await import("../src/users.ts");
+    const { runWithUser } = await import("../src/users.ts");
+    const cookie = await signedInUser("alice");
+    const dirs = userDirs("alice");
+    fs.mkdirSync(dirs.targetDir, { recursive: true });
+    const aaxPath = path.join(dirs.targetDir, "book.aaxc");
+    fs.writeFileSync(aaxPath, "12345");
+    runWithUser("alice", () => markDownloaded("B0CACHE001", "A", "Some Book", aaxPath));
+
+    const res = await app.request("/api/debug/clear-download-cache", { method: "POST", headers: { cookie } });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.freedBytes, 5);
+    assert.equal(fs.existsSync(aaxPath), false);
+
+    const book = runWithUser("alice", () => getAudiobookByAsin("B0CACHE001"));
+    assert.equal(book?.downloaded_at, null);
+    assert.equal(book?.aax_path, null);
+  });
+
+  it("keeps the book's title/author — only download bookkeeping is cleared", async () => {
+    const { userDirs, runWithUser } = await import("../src/users.ts");
+    const cookie = await signedInUser("alice");
+    const dirs = userDirs("alice");
+    fs.mkdirSync(dirs.targetDir, { recursive: true });
+    const aaxPath = path.join(dirs.targetDir, "book.aaxc");
+    fs.writeFileSync(aaxPath, "12345");
+    runWithUser("alice", () => markDownloaded("B0CACHE002", "A", "Some Book", aaxPath));
+
+    const res = await app.request("/api/debug/clear-download-cache", { method: "POST", headers: { cookie } });
+    assert.equal(res.status, 200);
+
+    const books = await (await app.request("/api/books", { headers: { cookie } })).json();
+    const book = books.find((b: { asin: string }) => b.asin === "B0CACHE002");
+    assert.equal(book.title, "Some Book");
+  });
+
+  it("refuses (409) while an operation is running", async () => {
+    const cookie = await signedInUser("alice");
+    startOperation("sync");
+    const res = await app.request("/api/debug/clear-download-cache", { method: "POST", headers: { cookie } });
+    assert.equal(res.status, 409);
+    const data = await res.json();
+    assert.ok(data.error);
+  });
+});
+
 // POST /prepare/:asin (the old HTML-fragment route) is gone — its coverage
 // (invalid ASIN, queues + starts, 409 while busy) lives on
 // POST /api/prepare/:asin under "operation-start JSON endpoints" above.

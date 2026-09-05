@@ -8,6 +8,7 @@ import type {
   OutputFormat,
   AudioFormat,
   AudioQuality,
+  StorageStats,
 } from "./types.ts";
 
 /** Thrown for any non-2xx response; carries the parsed { error } message
@@ -123,6 +124,12 @@ export const api = {
 
   library: {
     reset: () => request<void>("/api/library/reset", { method: "POST" }),
+  },
+
+  debug: {
+    storage: () => request<StorageStats>("/api/debug/storage"),
+    clearDownloadCache: () =>
+      request<{ freedBytes: number }>("/api/debug/clear-download-cache", { method: "POST" }),
   },
 
   tableState: {
