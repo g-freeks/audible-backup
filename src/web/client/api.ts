@@ -108,6 +108,7 @@ export const api = {
       audioArgs?: string;
       audioCustomEnabled?: boolean;
       outputFormat?: OutputFormat;
+      outputDir?: string;
     }) => request<SettingsState>("/api/settings", { method: "PATCH", ...json(patch) }),
   },
 

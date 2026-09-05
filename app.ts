@@ -92,7 +92,7 @@ Examples:
   const dirs = user ? userDirs(user.name) : undefined;
 
   const targetDir = getArg(args, "--dir") || dirs?.targetDir || config.targetDir;
-  const outputDir = getArg(args, "--output") || dirs?.outputDir || config.outputDir;
+  const outputDir = getArg(args, "--output") || user?.outputDir || dirs?.outputDir || config.outputDir;
   const activationBytes =
     getArg(args, "--activation-bytes") ||
     user?.activationBytes ||

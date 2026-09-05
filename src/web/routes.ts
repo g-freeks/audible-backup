@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { config } from "../config.ts";
+import { config, resolvePath } from "../config.ts";
 
 import * as fs from "fs";
 import * as path from "path";
@@ -55,6 +55,7 @@ import {
   userDirs,
   setAudioSettings,
   setOutputFormat,
+  setOutputDir,
   setTableState,
   type TableState,
 } from "../users.ts";
@@ -169,7 +170,11 @@ function requestPaths() {
     const dirs = userDirs(user.name);
     return {
       targetDir: dirs.targetDir,
-      outputDir: dirs.outputDir,
+      // The user's own chosen folder, if any, else userDirs()'s fixed
+      // default — AUDIBLE_OUTPUT_DIR is a legacy single-user knob (see the
+      // no-user branch below) and was never consulted per-account.
+      outputDir: user.outputDir || dirs.outputDir,
+      outputDirDefault: dirs.outputDir,
       activationBytes: user.activationBytes || config.activationBytes,
       audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
       outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
@@ -178,6 +183,7 @@ function requestPaths() {
   return {
     targetDir: config.targetDir,
     outputDir: config.outputDir,
+    outputDirDefault: config.outputDir,
     activationBytes: config.activationBytes,
     audioSettings: DEFAULT_AUDIO_SETTINGS,
     outputFormat: DEFAULT_OUTPUT_FORMAT,
@@ -374,6 +380,7 @@ async function audibleStatus(): Promise<AudibleStatus> {
 }
 
 async function settingsState(user: NonNullable<ReturnType<typeof currentUser>>) {
+  const paths = requestPaths();
   return {
     userName: user.name,
     activationBytes: user.activationBytes || "",
@@ -382,6 +389,9 @@ async function settingsState(user: NonNullable<ReturnType<typeof currentUser>>) 
     desktop: isDesktopMode(),
     audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
     outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
+    outputDir: paths.outputDir,
+    outputDirDefault: paths.outputDirDefault,
+    outputDirIsCustom: !!user.outputDir,
     version: versionLine(),
   };
 }
@@ -465,6 +475,22 @@ routes.patch("/api/settings", async (c) => {
     const parsed = parseOutputFormatObject(record.outputFormat);
     if (!parsed) return c.json({ error: "Invalid output format" }, 400);
     setOutputFormat(user.name, parsed);
+  }
+
+  if (record.outputDir !== undefined) {
+    if (record.outputDir === null || record.outputDir === "") {
+      setOutputDir(user.name, undefined);
+    } else if (typeof record.outputDir === "string") {
+      const resolved = resolvePath(record.outputDir);
+      try {
+        fs.mkdirSync(resolved, { recursive: true });
+      } catch {
+        return c.json({ error: `Could not create or access "${resolved}"` }, 400);
+      }
+      setOutputDir(user.name, resolved);
+    } else {
+      return c.json({ error: "Invalid output directory" }, 400);
+    }
   }
 
   // Mutations above went through their own listUsers() reads, so the `user`

@@ -917,6 +917,73 @@ describe("PATCH /api/settings", () => {
     assert.equal(getUser("kevin")?.activationBytes, "cafef00d");
   });
 
+  it("GET /api/settings reports the default output dir with no override applied yet", async () => {
+    const cookie = await signedIn("quentin");
+    const { userDirs } = await import("../src/users.ts");
+    const res = await app.request("/api/settings", { headers: { cookie } });
+    const data = await res.json();
+    assert.equal(data.outputDir, userDirs("quentin").outputDir);
+    assert.equal(data.outputDirDefault, userDirs("quentin").outputDir);
+    assert.equal(data.outputDirIsCustom, false);
+  });
+
+  it("saves a custom output directory, creating it if needed", async () => {
+    const cookie = await signedIn("rachel");
+    const custom = path.join(tmpDir, "my-audiobooks");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: custom }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.outputDir, custom);
+    assert.equal(data.outputDirIsCustom, true);
+    assert.ok(fs.existsSync(custom));
+
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("rachel")?.outputDir, custom);
+  });
+
+  it("clears the override by saving an empty string", async () => {
+    const cookie = await signedIn("steve");
+    const custom = path.join(tmpDir, "steves-audiobooks");
+    await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: custom }),
+    });
+
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: "" }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.outputDirIsCustom, false);
+
+    const { getUser, userDirs } = await import("../src/users.ts");
+    assert.equal(getUser("steve")?.outputDir, undefined);
+    assert.equal(data.outputDir, userDirs("steve").outputDir);
+  });
+
+  it("rejects a path that can't be created", async () => {
+    const cookie = await signedIn("tina");
+    // A file in the way of a required path segment makes mkdirSync fail (ENOTDIR).
+    const blocker = path.join(tmpDir, "blocker");
+    fs.writeFileSync(blocker, "not a directory");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: path.join(blocker, "audiobooks") }),
+    });
+    assert.equal(res.status, 400);
+
+    const { getUser } = await import("../src/users.ts");
+    assert.equal(getUser("tina")?.outputDir, undefined);
+  });
+
   it("rejects a malformed output format instead of silently dropping it", async () => {
     const cookie = await signedIn("laura");
     const res = await app.request("/api/settings", {
@@ -1025,6 +1092,28 @@ describe("PATCH /api/settings", () => {
 
     const status = await (await app.request("/api/status", { headers: { cookie } })).json();
     assert.equal(status.converted, 1, "found under the nested author/title path the template describes");
+  });
+
+  it("a custom output directory actually changes where a converted book is found", async () => {
+    const cookie = await signedIn("uma");
+    const custom = path.join(tmpDir, "umas-audiobooks");
+    await app.request("/api/settings", {
+      method: "PATCH",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: custom }),
+    });
+
+    const { runWithUser } = await import("../src/users.ts");
+    runWithUser("uma", () => {
+      upsertBook("B0OUTDIR001", { author: "N. K. Jemisin", title: "The Fifth Season" });
+      markDownloaded("B0OUTDIR001", "N. K. Jemisin", "The Fifth Season", "/x/B0OUTDIR001.aaxc");
+    });
+    const bookDir = path.join(custom, "The Fifth Season");
+    fs.mkdirSync(bookDir, { recursive: true });
+    fs.writeFileSync(path.join(bookDir, "01 - Chapter 1.mp3"), "");
+
+    const status = await (await app.request("/api/status", { headers: { cookie } })).json();
+    assert.equal(status.converted, 1, "found under the custom output directory");
   });
 });
 

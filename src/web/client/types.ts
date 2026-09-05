@@ -92,6 +92,11 @@ export interface SettingsState {
   desktop: boolean;
   audioSettings: AudioSettings;
   outputFormat: OutputFormat;
+  /** Where converted audiobooks are currently written (custom or default). */
+  outputDir: string;
+  /** What outputDir would be without a custom override. */
+  outputDirDefault: string;
+  outputDirIsCustom: boolean;
   version: string;
 }
 

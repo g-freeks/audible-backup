@@ -24,7 +24,7 @@ function loadEnvFile(): void {
 
 loadEnvFile();
 
-function resolvePath(p: string): string {
+export function resolvePath(p: string): string {
   return path.resolve(p.replace("~", process.env.HOME || ""));
 }
 

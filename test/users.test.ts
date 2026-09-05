@@ -17,6 +17,7 @@ import {
   setTableState,
   setAudioSettings,
   setOutputFormat,
+  setOutputDir,
 } from "../src/users.ts";
 import { closeDb, markDownloaded, getAllAudiobooks } from "../src/db.ts";
 
@@ -214,5 +215,33 @@ describe("output format (naming templates)", () => {
 
   it("rejects an unknown user", () => {
     assert.throws(() => setOutputFormat("nobody", format), /Unknown user/);
+  });
+});
+
+describe("output directory override", () => {
+  it("saves and reads back a custom output directory", () => {
+    addUser("alice");
+    assert.equal(getUser("alice")?.outputDir, undefined, "nothing saved yet");
+
+    setOutputDir("alice", "/mnt/nas/audiobooks");
+    assert.equal(getUser("alice")?.outputDir, "/mnt/nas/audiobooks");
+  });
+
+  it("clears the override when given undefined", () => {
+    addUser("alice");
+    setOutputDir("alice", "/mnt/nas/audiobooks");
+    setOutputDir("alice", undefined);
+    assert.equal(getUser("alice")?.outputDir, undefined);
+  });
+
+  it("keeps each user's override separate", () => {
+    addUser("alice");
+    addUser("bob");
+    setOutputDir("alice", "/mnt/nas/audiobooks");
+    assert.equal(getUser("bob")?.outputDir, undefined);
+  });
+
+  it("rejects an unknown user", () => {
+    assert.throws(() => setOutputDir("nobody", "/tmp/x"), /Unknown user/);
   });
 });

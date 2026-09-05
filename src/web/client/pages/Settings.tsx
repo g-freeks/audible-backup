@@ -10,6 +10,7 @@ import { api, ApiRequestError } from "../api.ts";
 import type { AudibleStatus, AudioFormat, AudioQuality, SettingsState, StorageStats } from "../types.ts";
 import { AUDIO_FORMATS, AUDIO_QUALITIES, AUDIO_PRESETS, audioArgsString, DEFAULT_AUDIO_SETTINGS, DEFAULT_OUTPUT_FORMAT } from "../types.ts";
 import { OutputFormatBuilder } from "./OutputFormatBuilder.tsx";
+import { chooseFolderNative, hasNativeFolderPicker } from "../desktopBridge.ts";
 
 const ACTIVATION_BYTES_HINT =
   "A decryption key tied to your Audible account/device. Only needed for " +
@@ -166,6 +167,7 @@ export function SettingsPage() {
   const [customEnabled, setCustomEnabled] = React.useState(false);
   const [audioArgs, setAudioArgs] = React.useState("");
   const [outputFormat, setOutputFormat] = React.useState(DEFAULT_OUTPUT_FORMAT);
+  const [outputDir, setOutputDir] = React.useState("");
   const [message, setMessage] = React.useState<string | null>(null);
   const [storage, setStorage] = React.useState<StorageStats | null>(null);
 
@@ -186,6 +188,7 @@ export function SettingsPage() {
         setCustomEnabled(!!s.audioSettings.customArgs?.trim());
         setAudioArgs(audioArgsString(s.audioSettings));
         setOutputFormat(s.outputFormat);
+        setOutputDir(s.outputDirIsCustom ? s.outputDir : "");
       })
       .catch((err) => {
         if (!(err instanceof ApiRequestError)) toast("Could not load settings", true);
@@ -215,14 +218,27 @@ export function SettingsPage() {
     }
   };
 
-  const saveOutput = async (next: { audioFormat: AudioFormat; audioQuality: AudioQuality; audioArgs: string; audioCustomEnabled: boolean; outputFormat: typeof outputFormat }) => {
+  const saveOutput = async (next: {
+    audioFormat: AudioFormat;
+    audioQuality: AudioQuality;
+    audioArgs: string;
+    audioCustomEnabled: boolean;
+    outputFormat: typeof outputFormat;
+    outputDir: string;
+  }) => {
     try {
       const updated = await api.settings.update(next);
       setSettings(updated);
+      setOutputDir(updated.outputDirIsCustom ? updated.outputDir : "");
       setMessage("Settings saved");
     } catch (err) {
       toast(err instanceof ApiRequestError ? err.message : "Could not save settings", true);
     }
+  };
+
+  const browseOutputDir = async () => {
+    const chosen = await chooseFolderNative(outputDir || settings.outputDir);
+    if (chosen) setOutputDir(chosen);
   };
 
   // Matches the old UI exactly: preset buttons overwrite the displayed args
@@ -378,7 +394,34 @@ export function SettingsPage() {
 
             <Tabs.Panel className="tab-panel" value="output">
               <div className="auth-card">
-                <h2>Conversion quality</h2>
+                <h2>Output folder</h2>
+                <div className="field-stack">
+                  <label htmlFor="output-dir">Converted audiobooks are saved to</label>
+                  <div className="btn-row">
+                    <input
+                      id="output-dir"
+                      value={outputDir}
+                      onChange={(e) => setOutputDir(e.target.value)}
+                      placeholder={settings.outputDirDefault}
+                      style={{ flex: 1 }}
+                    />
+                    {hasNativeFolderPicker() && (
+                      <button className="btn btn-sm" type="button" onClick={browseOutputDir}>
+                        Browse…
+                      </button>
+                    )}
+                    {outputDir && (
+                      <button className="btn btn-sm btn-ghost" type="button" onClick={() => setOutputDir("")}>
+                        Reset to default
+                      </button>
+                    )}
+                  </div>
+                  <p className="hint">
+                    Default: <code>{settings.outputDirDefault}</code>. Saved with the button below.
+                  </p>
+                </div>
+
+                <h2 style={{ marginTop: "1.5rem" }}>Conversion quality</h2>
                 <div className="quality-section">
                   <label>Output format</label>
                   <div className="btn-row" role="group" aria-label="Output format">
@@ -444,6 +487,7 @@ export function SettingsPage() {
                       audioArgs,
                       audioCustomEnabled: customEnabled,
                       outputFormat,
+                      outputDir,
                     })
                   }
                 >
