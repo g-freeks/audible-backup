@@ -45,7 +45,7 @@ function xdgDataHome(): string {
 }
 
 /** ~/Music on a typical system; XDG_MUSIC_DIR when the session sets it. */
-function xdgMusicDir(): string {
+export function xdgMusicDir(): string {
   return resolvePath(env("XDG_MUSIC_DIR", "~/Music"));
 }
 

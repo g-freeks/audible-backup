@@ -184,6 +184,82 @@ describe("single-user desktop UI", () => {
   });
 });
 
+describe("output directory sandbox safety", () => {
+  // A path outside --filesystem=xdg-music:create doesn't error in the real
+  // Flatpak — it silently resolves against the app's own isolated $HOME
+  // (~/.var/app/<id> on the host), so a typed path has to prove it's either
+  // under the music dir or came back from the native folder picker.
+
+  it("rejects a hand-typed path outside ~/Music", async () => {
+    const outside = path.join(tmpDir, "outside-music", "Audiobooks");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      ...withToken,
+      headers: { ...withToken.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: outside }),
+    });
+    assert.equal(res.status, 400);
+    assert.ok(!fs.existsSync(outside), "never created");
+  });
+
+  it("accepts the same path once it's marked as coming from the native picker", async () => {
+    const outside = path.join(tmpDir, "outside-music", "Audiobooks");
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      ...withToken,
+      headers: { ...withToken.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: outside, outputDirFromPicker: true }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.outputDir, outside);
+    assert.ok(fs.existsSync(outside));
+  });
+
+  it("accepts a hand-typed path under ~/Music without needing the picker", async () => {
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      ...withToken,
+      headers: { ...withToken.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: path.join(tmpDir, "music", "Podcasts") }),
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("lets an unchanged custom path resave even without the picker flag", async () => {
+    const outside = path.join(tmpDir, "outside-music", "Audiobooks");
+    await app.request("/api/settings", {
+      method: "PATCH",
+      ...withToken,
+      headers: { ...withToken.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: outside, outputDirFromPicker: true }),
+    });
+
+    // Resaving some other field re-sends the same outputDir, unflagged.
+    const res = await app.request("/api/settings", {
+      method: "PATCH",
+      ...withToken,
+      headers: { ...withToken.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: outside, audioFormat: "flac", audioQuality: "high" }),
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("flags an already-saved out-of-sandbox path as at risk", async () => {
+    ensureDesktopUser();
+    const { setOutputDir } = await import("../src/users.ts");
+    setOutputDir(DESKTOP_USER, path.join(tmpDir, "outside-music", "Audiobooks"));
+
+    const settings = await (await app.request("/api/settings", withToken)).json();
+    assert.equal(settings.outputDirSandboxRisk, true);
+  });
+
+  it("reports no risk for the default output directory", async () => {
+    const settings = await (await app.request("/api/settings", withToken)).json();
+    assert.equal(settings.outputDirSandboxRisk, false);
+  });
+});
+
 describe("finished audiobooks on the desktop", () => {
   // The Open Folder button (vs. a ZIP download link) is client-rendered
   // now (Topbar.tsx branches on session.desktop) — POST /open-output itself

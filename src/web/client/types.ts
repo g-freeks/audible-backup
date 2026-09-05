@@ -97,6 +97,10 @@ export interface SettingsState {
   /** What outputDir would be without a custom override. */
   outputDirDefault: string;
   outputDirIsCustom: boolean;
+  /** True if the saved outputDir is outside what the desktop sandbox can
+   * actually reach (see isSandboxSafePath() server-side) — writes there
+   * silently land somewhere else entirely. Always false outside desktop mode. */
+  outputDirSandboxRisk: boolean;
   version: string;
 }
 

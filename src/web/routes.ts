@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { config, resolvePath } from "../config.ts";
+import { config, resolvePath, isDesktopMode, desktopPaths, xdgMusicDir } from "../config.ts";
 
 import * as fs from "fs";
 import * as path from "path";
@@ -61,7 +61,6 @@ import {
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
-import { isDesktopMode } from "../config.ts";
 import { ensureDesktopUser } from "../users.ts";
 
 export const routes = new Hono();
@@ -161,6 +160,26 @@ routes.use("*", async (c, next) => {
 
 function userListEntries() {
   return listUsers().map((u) => ({ name: u.name, hasPassword: userHasPassword(u) }));
+}
+
+/** Whether `child` is `parent` or a path underneath it (both already resolved/absolute). */
+function isWithin(child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * In the Flatpak, a path outside the sandbox's declared filesystem
+ * permissions (currently just --filesystem=xdg-music:create) doesn't error —
+ * it silently resolves against the app's own isolated $HOME
+ * (~/.var/app/<id> on the real host per Flatpak's default private-home
+ * sandboxing), so files land somewhere the user never sees and never asked
+ * for. A path typed by hand can't be trusted the way one returned by the
+ * portal-backed native folder picker (desktopBridge.ts) can, since only the
+ * picker's result is guaranteed to have real access bound into the sandbox.
+ */
+function isSandboxSafePath(resolved: string): boolean {
+  return isWithin(resolved, xdgMusicDir()) || isWithin(resolved, desktopPaths.dataDir);
 }
 
 /** Per-request paths, activation bytes, and audio settings: user-scoped or legacy config. */
@@ -392,6 +411,9 @@ async function settingsState(user: NonNullable<ReturnType<typeof currentUser>>) 
     outputDir: paths.outputDir,
     outputDirDefault: paths.outputDirDefault,
     outputDirIsCustom: !!user.outputDir,
+    // A path saved before this safety check existed (or restored from an
+    // old backup) may already be silently wrong — see isSandboxSafePath().
+    outputDirSandboxRisk: isDesktopMode() && !!user.outputDir && !isSandboxSafePath(user.outputDir),
     version: versionLine(),
   };
 }
@@ -482,6 +504,22 @@ routes.patch("/api/settings", async (c) => {
       setOutputDir(user.name, undefined);
     } else if (typeof record.outputDir === "string") {
       const resolved = resolvePath(record.outputDir);
+      const fromPicker = record.outputDirFromPicker === true;
+      const unchanged = resolved === user.outputDir;
+      // Only a genuinely new value needs to prove it's trustworthy — resaving
+      // whatever was already there (e.g. just changing quality on this same
+      // tab) must not suddenly start failing.
+      if (isDesktopMode() && !fromPicker && !unchanged && !isSandboxSafePath(resolved)) {
+        return c.json(
+          {
+            error:
+              `"${resolved}" is outside what the sandbox can actually reach — writes there would silently ` +
+              `land in the app's own isolated folder instead. Use "Browse…" to pick a folder outside ~/Music, ` +
+              `or choose one under ~/Music directly.`,
+          },
+          400,
+        );
+      }
       try {
         fs.mkdirSync(resolved, { recursive: true });
       } catch {

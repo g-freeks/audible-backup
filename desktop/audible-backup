@@ -266,7 +266,13 @@ app.connect("activate", () => {
 
     try {
       const contentManager = view.get_user_content_manager();
-      contentManager.register_script_message_handler("chooseFolder", null);
+      // Single-argument form only — the two-argument overload is a distinct
+      // function (register_script_message_handler_in_world) with a required
+      // world name, not this one with an optional second parameter. Passing
+      // a bogus extra argument here threw, was swallowed by the catch below,
+      // and left window.webkit.messageHandlers.chooseFolder undefined in the
+      // page — the "Browse…" button never has anything to call.
+      contentManager.register_script_message_handler("chooseFolder");
       contentManager.connect("script-message-received::chooseFolder", (_mgr, jsValue) => {
         let initialPath = "";
         try {

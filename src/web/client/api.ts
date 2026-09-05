@@ -109,6 +109,9 @@ export const api = {
       audioCustomEnabled?: boolean;
       outputFormat?: OutputFormat;
       outputDir?: string;
+      /** True only when outputDir came back from chooseFolderNative() —
+       * lets the server trust a path outside ~/Music in desktop mode. */
+      outputDirFromPicker?: boolean;
     }) => request<SettingsState>("/api/settings", { method: "PATCH", ...json(patch) }),
   },
 

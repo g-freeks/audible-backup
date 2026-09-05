@@ -168,6 +168,7 @@ export function SettingsPage() {
   const [audioArgs, setAudioArgs] = React.useState("");
   const [outputFormat, setOutputFormat] = React.useState(DEFAULT_OUTPUT_FORMAT);
   const [outputDir, setOutputDir] = React.useState("");
+  const [outputDirFromPicker, setOutputDirFromPicker] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [storage, setStorage] = React.useState<StorageStats | null>(null);
 
@@ -189,6 +190,7 @@ export function SettingsPage() {
         setAudioArgs(audioArgsString(s.audioSettings));
         setOutputFormat(s.outputFormat);
         setOutputDir(s.outputDirIsCustom ? s.outputDir : "");
+        setOutputDirFromPicker(false);
       })
       .catch((err) => {
         if (!(err instanceof ApiRequestError)) toast("Could not load settings", true);
@@ -225,11 +227,13 @@ export function SettingsPage() {
     audioCustomEnabled: boolean;
     outputFormat: typeof outputFormat;
     outputDir: string;
+    outputDirFromPicker: boolean;
   }) => {
     try {
       const updated = await api.settings.update(next);
       setSettings(updated);
       setOutputDir(updated.outputDirIsCustom ? updated.outputDir : "");
+      setOutputDirFromPicker(false);
       setMessage("Settings saved");
     } catch (err) {
       toast(err instanceof ApiRequestError ? err.message : "Could not save settings", true);
@@ -238,7 +242,10 @@ export function SettingsPage() {
 
   const browseOutputDir = async () => {
     const chosen = await chooseFolderNative(outputDir || settings.outputDir);
-    if (chosen) setOutputDir(chosen);
+    if (chosen) {
+      setOutputDir(chosen);
+      setOutputDirFromPicker(true);
+    }
   };
 
   // Matches the old UI exactly: preset buttons overwrite the displayed args
@@ -395,13 +402,23 @@ export function SettingsPage() {
             <Tabs.Panel className="tab-panel" value="output">
               <div className="auth-card">
                 <h2>Output folder</h2>
+                {settings.outputDirSandboxRisk && (
+                  <p className="auth-error">
+                    <strong>{settings.outputDir}</strong> is outside what the sandbox can reach — files have likely
+                    been landing in the app&apos;s own private folder instead, not the real path shown here. Pick the
+                    folder again with &quot;Browse…&quot; (or reset to the default) and save.
+                  </p>
+                )}
                 <div className="field-stack">
                   <label htmlFor="output-dir">Converted audiobooks are saved to</label>
                   <div className="btn-row">
                     <input
                       id="output-dir"
                       value={outputDir}
-                      onChange={(e) => setOutputDir(e.target.value)}
+                      onChange={(e) => {
+                        setOutputDir(e.target.value);
+                        setOutputDirFromPicker(false);
+                      }}
                       placeholder={settings.outputDirDefault}
                       style={{ flex: 1 }}
                     />
@@ -411,13 +428,23 @@ export function SettingsPage() {
                       </button>
                     )}
                     {outputDir && (
-                      <button className="btn btn-sm btn-ghost" type="button" onClick={() => setOutputDir("")}>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        type="button"
+                        onClick={() => {
+                          setOutputDir("");
+                          setOutputDirFromPicker(false);
+                        }}
+                      >
                         Reset to default
                       </button>
                     )}
                   </div>
                   <p className="hint">
                     Default: <code>{settings.outputDirDefault}</code>. Saved with the button below.
+                    {settings.desktop && !hasNativeFolderPicker() && (
+                      <> A folder outside ~/Music can only be set through &quot;Browse…&quot;, not typed by hand.</>
+                    )}
                   </p>
                 </div>
 
@@ -488,6 +515,7 @@ export function SettingsPage() {
                       audioCustomEnabled: customEnabled,
                       outputFormat,
                       outputDir,
+                      outputDirFromPicker,
                     })
                   }
                 >
