@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import { config } from "../config.ts";
+import { config, resolvePath, isDesktopMode, desktopPaths, xdgMusicDir } from "../config.ts";
 
 import * as fs from "fs";
 import * as path from "path";
-import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, getAllBooks } from "../db.ts";
+import { getAllAudiobooks, getDownloadedAsins, getNotDownloadedBooks, getAudiobookByAsin, getIgnoredAsins, ignoreBook, unignoreBook, deleteBook, resetDatabase, clearDownloadCache, getAllBooks } from "../db.ts";
 import { AudibleLibrary, type AudiobookEntry } from "../library.ts";
 import {
   Converter,
@@ -55,12 +55,12 @@ import {
   userDirs,
   setAudioSettings,
   setOutputFormat,
+  setOutputDir,
   setTableState,
   type TableState,
 } from "../users.ts";
 import { createSession, getSessionUser, destroySession } from "./sessions.ts";
 import { desktopToken, DESKTOP_COOKIE } from "./desktop.ts";
-import { isDesktopMode } from "../config.ts";
 import { ensureDesktopUser } from "../users.ts";
 
 export const routes = new Hono();
@@ -162,6 +162,26 @@ function userListEntries() {
   return listUsers().map((u) => ({ name: u.name, hasPassword: userHasPassword(u) }));
 }
 
+/** Whether `child` is `parent` or a path underneath it (both already resolved/absolute). */
+function isWithin(child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * In the Flatpak, a path outside the sandbox's declared filesystem
+ * permissions (currently just --filesystem=xdg-music:create) doesn't error —
+ * it silently resolves against the app's own isolated $HOME
+ * (~/.var/app/<id> on the real host per Flatpak's default private-home
+ * sandboxing), so files land somewhere the user never sees and never asked
+ * for. A path typed by hand can't be trusted the way one returned by the
+ * portal-backed native folder picker (desktopBridge.ts) can, since only the
+ * picker's result is guaranteed to have real access bound into the sandbox.
+ */
+function isSandboxSafePath(resolved: string): boolean {
+  return isWithin(resolved, xdgMusicDir()) || isWithin(resolved, desktopPaths.dataDir);
+}
+
 /** Per-request paths, activation bytes, and audio settings: user-scoped or legacy config. */
 function requestPaths() {
   const user = currentUser();
@@ -169,7 +189,11 @@ function requestPaths() {
     const dirs = userDirs(user.name);
     return {
       targetDir: dirs.targetDir,
-      outputDir: dirs.outputDir,
+      // The user's own chosen folder, if any, else userDirs()'s fixed
+      // default — AUDIBLE_OUTPUT_DIR is a legacy single-user knob (see the
+      // no-user branch below) and was never consulted per-account.
+      outputDir: user.outputDir || dirs.outputDir,
+      outputDirDefault: dirs.outputDir,
       activationBytes: user.activationBytes || config.activationBytes,
       audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
       outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
@@ -178,6 +202,7 @@ function requestPaths() {
   return {
     targetDir: config.targetDir,
     outputDir: config.outputDir,
+    outputDirDefault: config.outputDir,
     activationBytes: config.activationBytes,
     audioSettings: DEFAULT_AUDIO_SETTINGS,
     outputFormat: DEFAULT_OUTPUT_FORMAT,
@@ -374,6 +399,7 @@ async function audibleStatus(): Promise<AudibleStatus> {
 }
 
 async function settingsState(user: NonNullable<ReturnType<typeof currentUser>>) {
+  const paths = requestPaths();
   return {
     userName: user.name,
     activationBytes: user.activationBytes || "",
@@ -382,6 +408,12 @@ async function settingsState(user: NonNullable<ReturnType<typeof currentUser>>) 
     desktop: isDesktopMode(),
     audioSettings: user.audioSettings || DEFAULT_AUDIO_SETTINGS,
     outputFormat: user.outputFormat || DEFAULT_OUTPUT_FORMAT,
+    outputDir: paths.outputDir,
+    outputDirDefault: paths.outputDirDefault,
+    outputDirIsCustom: !!user.outputDir,
+    // A path saved before this safety check existed (or restored from an
+    // old backup) may already be silently wrong — see isSandboxSafePath().
+    outputDirSandboxRisk: isDesktopMode() && !!user.outputDir && !isSandboxSafePath(user.outputDir),
     version: versionLine(),
   };
 }
@@ -465,6 +497,38 @@ routes.patch("/api/settings", async (c) => {
     const parsed = parseOutputFormatObject(record.outputFormat);
     if (!parsed) return c.json({ error: "Invalid output format" }, 400);
     setOutputFormat(user.name, parsed);
+  }
+
+  if (record.outputDir !== undefined) {
+    if (record.outputDir === null || record.outputDir === "") {
+      setOutputDir(user.name, undefined);
+    } else if (typeof record.outputDir === "string") {
+      const resolved = resolvePath(record.outputDir);
+      const fromPicker = record.outputDirFromPicker === true;
+      const unchanged = resolved === user.outputDir;
+      // Only a genuinely new value needs to prove it's trustworthy — resaving
+      // whatever was already there (e.g. just changing quality on this same
+      // tab) must not suddenly start failing.
+      if (isDesktopMode() && !fromPicker && !unchanged && !isSandboxSafePath(resolved)) {
+        return c.json(
+          {
+            error:
+              `"${resolved}" is outside what the sandbox can actually reach — writes there would silently ` +
+              `land in the app's own isolated folder instead. Use "Browse…" to pick a folder outside ~/Music, ` +
+              `or choose one under ~/Music directly.`,
+          },
+          400,
+        );
+      }
+      try {
+        fs.mkdirSync(resolved, { recursive: true });
+      } catch {
+        return c.json({ error: `Could not create or access "${resolved}"` }, 400);
+      }
+      setOutputDir(user.name, resolved);
+    } else {
+      return c.json({ error: "Invalid output directory" }, 400);
+    }
   }
 
   // Mutations above went through their own listUsers() reads, so the `user`
@@ -567,6 +631,61 @@ routes.post("/api/library/reset", (c) => {
   }
   resetDatabase();
   return c.body(null, 204);
+});
+
+/** Total size and file count of everything under `dir`; zero if it doesn't exist. */
+function dirStats(dir: string): { bytes: number; fileCount: number } {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { recursive: true, withFileTypes: true });
+  } catch {
+    return { bytes: 0, fileCount: 0 };
+  }
+  let bytes = 0;
+  let fileCount = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    fileCount++;
+    try {
+      bytes += fs.statSync(path.join(entry.parentPath, entry.name)).size;
+    } catch {
+      // removed concurrently — fine to undercount
+    }
+  }
+  return { bytes, fileCount };
+}
+
+// The download cache (raw .aax/.aaxc + chapter/cover sidecars) is meant to be
+// disposable once a book is converted, but nothing prunes it automatically —
+// it only ever grows, invisibly, inside the app's own data directory (in the
+// Flatpak, that's the sandboxed XDG data dir a user won't normally browse).
+routes.get("/api/debug/storage", (c) => {
+  const paths = requestPaths();
+  return c.json({
+    downloadCache: { path: paths.targetDir, ...dirStats(paths.targetDir) },
+    converted: { path: paths.outputDir, ...dirStats(paths.outputDir) },
+  });
+});
+
+routes.post("/api/debug/clear-download-cache", (c) => {
+  const user = currentUser();
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (isOperationRunning()) {
+    return c.json({ error: "An operation is running — wait for it to finish first." }, 409);
+  }
+  const paths = requestPaths();
+  const before = dirStats(paths.targetDir);
+  try {
+    fs.rmSync(paths.targetDir, { recursive: true, force: true });
+    fs.mkdirSync(paths.targetDir, { recursive: true });
+  } catch {
+    return c.json({ error: "Could not clear the download cache" }, 500);
+  }
+  // Already-converted books stay converted (findConvertedChapters doesn't
+  // touch the aax file); anything not yet converted just goes back to
+  // "not downloaded" instead of pointing at a file that no longer exists.
+  clearDownloadCache();
+  return c.json({ freedBytes: before.bytes });
 });
 
 /**

@@ -24,7 +24,7 @@ function loadEnvFile(): void {
 
 loadEnvFile();
 
-function resolvePath(p: string): string {
+export function resolvePath(p: string): string {
   return path.resolve(p.replace("~", process.env.HOME || ""));
 }
 
@@ -45,7 +45,7 @@ function xdgDataHome(): string {
 }
 
 /** ~/Music on a typical system; XDG_MUSIC_DIR when the session sets it. */
-function xdgMusicDir(): string {
+export function xdgMusicDir(): string {
   return resolvePath(env("XDG_MUSIC_DIR", "~/Music"));
 }
 

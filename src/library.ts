@@ -430,6 +430,28 @@ export class AudibleLibrary {
     this.reporter.log(`Found ${libraryEntries.length} books in library`);
 
     const ignoredAsins = getIgnoredAsins();
+
+    // Upsert metadata for every book Audible reports (minus ignored ones),
+    // not just the ones still pending download — otherwise a book whose
+    // file was auto-imported from disk (asin + path only, no title; see
+    // importExistingFiles) would never get its title/author backfilled,
+    // since it's already "downloaded" and would be filtered out below.
+    for (const entry of libraryEntries) {
+      if (ignoredAsins.has(entry.asin)) continue;
+      upsertBook(entry.asin, {
+        author: entry.author,
+        title: entry.title,
+        narrators: entry.narrators,
+        releaseDate: entry.releaseDate,
+        addedToLibraryDate: entry.addedToLibraryDate,
+        runtimeMinutes: entry.runtimeMinutes,
+        language: entry.language,
+        formatType: entry.formatType,
+        seriesTitle: entry.seriesTitle,
+        seriesSequence: entry.seriesSequence,
+      });
+    }
+
     let books: AudiobookEntry[];
 
     if (force) {
@@ -441,22 +463,6 @@ export class AudibleLibrary {
       books = libraryEntries.filter(
         (entry) => !downloadedAsins.has(entry.asin) && !ignoredAsins.has(entry.asin),
       );
-    }
-
-    // Upsert all books into the DB so the web UI can display them
-    for (const book of books) {
-      upsertBook(book.asin, {
-        author: book.author,
-        title: book.title,
-        narrators: book.narrators,
-        releaseDate: book.releaseDate,
-        addedToLibraryDate: book.addedToLibraryDate,
-        runtimeMinutes: book.runtimeMinutes,
-        language: book.language,
-        formatType: book.formatType,
-        seriesTitle: book.seriesTitle,
-        seriesSequence: book.seriesSequence,
-      });
     }
 
     if (books.length === 0) {

@@ -94,6 +94,21 @@ export function resetDatabase(): void {
   initSchema(db);
 }
 
+/**
+ * Forgets every book's download bookkeeping (but keeps titles/series/etc.)
+ * after the raw .aax/.aaxc files backing it were deleted from disk — e.g. by
+ * clearing the download cache. A book already converted stays converted;
+ * one that wasn't is now correctly "not downloaded" instead of pointing at
+ * a file that no longer exists.
+ */
+export function clearDownloadCache(): void {
+  const d = getDb();
+  d.exec(`
+    UPDATE audiobooks SET downloaded_at = NULL, aax_path = NULL
+    WHERE downloaded_at IS NOT NULL
+  `);
+}
+
 export function closeDb(): void {
   for (const db of connections.values()) {
     db.close();

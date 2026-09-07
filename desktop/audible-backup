@@ -241,8 +241,73 @@ app.connect("activate", () => {
     stack.set_visible_child_name("error");
   };
 
+  /**
+   * Bridges the page's "Browse…" output-folder button (src/web/client/
+   * desktopBridge.ts) to a native GTK4 folder chooser. Under Flatpak,
+   * Gtk.FileDialog routes through the file-chooser portal, so the sandbox
+   * gets access to whatever folder is picked without needing a broader
+   * --filesystem permission than the xdg-music one it already has.
+   *
+   * The page posts the current path (or "") to the "chooseFolder" script
+   * message handler; the chosen absolute path (or null if cancelled) is
+   * delivered back by calling window.__chooseFolderResult in the page.
+   */
+  function setupFolderPicker(view) {
+    const reply = (path) => {
+      const script = `window.__chooseFolderResult && window.__chooseFolderResult(${JSON.stringify(path)});`;
+      view.evaluate_javascript(script, -1, null, null, null, (source, res) => {
+        try {
+          source.evaluate_javascript_finish(res);
+        } catch (e) {
+          printerr(`[folder-picker] could not deliver result to page: ${e.message}`);
+        }
+      });
+    };
+
+    try {
+      const contentManager = view.get_user_content_manager();
+      // Single-argument form only — the two-argument overload is a distinct
+      // function (register_script_message_handler_in_world) with a required
+      // world name, not this one with an optional second parameter. Passing
+      // a bogus extra argument here threw, was swallowed by the catch below,
+      // and left window.webkit.messageHandlers.chooseFolder undefined in the
+      // page — the "Browse…" button never has anything to call.
+      contentManager.register_script_message_handler("chooseFolder");
+      contentManager.connect("script-message-received::chooseFolder", (_mgr, jsValue) => {
+        let initialPath = "";
+        try {
+          initialPath = jsValue.to_string();
+        } catch {
+          // fall through with no initial folder
+        }
+
+        const dialog = new Gtk.FileDialog({ title: "Choose Output Folder" });
+        if (initialPath) {
+          try {
+            dialog.set_initial_folder(Gio.File.new_for_path(initialPath));
+          } catch {
+            // initial folder may not exist yet — the dialog just opens without one
+          }
+        }
+
+        dialog.select_folder(window, null, (dlg, res) => {
+          try {
+            const folder = dlg.select_folder_finish(res);
+            reply(folder.get_path());
+          } catch {
+            // user cancelled, or the dialog failed — either way, nothing changed
+            reply(null);
+          }
+        });
+      });
+    } catch (e) {
+      printerr(`[folder-picker] native folder picker unavailable: ${e.message}`);
+    }
+  }
+
   server.start((url) => {
     const view = new WebKit.WebView({ vexpand: true, hexpand: true });
+    setupFolderPicker(view);
 
     // Anything that is not our own server — the Audible sign-in page, help
     // links — belongs in the user's real browser, where their Amazon session

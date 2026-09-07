@@ -7,9 +7,10 @@ import { useConfirm } from "../components/ConfirmDialog.tsx";
 import { useSession } from "../SessionContext.tsx";
 import { useOperationContext } from "../OperationContext.tsx";
 import { api, ApiRequestError } from "../api.ts";
-import type { AudibleStatus, AudioFormat, AudioQuality, SettingsState } from "../types.ts";
+import type { AudibleStatus, AudioFormat, AudioQuality, SettingsState, StorageStats } from "../types.ts";
 import { AUDIO_FORMATS, AUDIO_QUALITIES, AUDIO_PRESETS, audioArgsString, DEFAULT_AUDIO_SETTINGS, DEFAULT_OUTPUT_FORMAT } from "../types.ts";
 import { OutputFormatBuilder } from "./OutputFormatBuilder.tsx";
+import { chooseFolderNative, hasNativeFolderPicker } from "../desktopBridge.ts";
 
 const ACTIVATION_BYTES_HINT =
   "A decryption key tied to your Audible account/device. Only needed for " +
@@ -32,6 +33,18 @@ const MARKETPLACES: [string, string][] = [
 
 const FORMAT_LABELS: Record<AudioFormat, string> = { mp3: "MP3", flac: "FLAC", aac: "AAC" };
 const QUALITY_LABELS: Record<AudioQuality, string> = { low: "Low", medium: "Medium", high: "High" };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
 
 function AudibleCard({
   audible,
@@ -154,7 +167,16 @@ export function SettingsPage() {
   const [customEnabled, setCustomEnabled] = React.useState(false);
   const [audioArgs, setAudioArgs] = React.useState("");
   const [outputFormat, setOutputFormat] = React.useState(DEFAULT_OUTPUT_FORMAT);
+  const [outputDir, setOutputDir] = React.useState("");
+  const [outputDirFromPicker, setOutputDirFromPicker] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
+  const [storage, setStorage] = React.useState<StorageStats | null>(null);
+
+  const loadStorage = React.useCallback(() => {
+    api.debug.storage().then(setStorage).catch(() => {});
+  }, []);
+
+  React.useEffect(loadStorage, [loadStorage]);
 
   const load = React.useCallback(() => {
     api.settings
@@ -167,6 +189,8 @@ export function SettingsPage() {
         setCustomEnabled(!!s.audioSettings.customArgs?.trim());
         setAudioArgs(audioArgsString(s.audioSettings));
         setOutputFormat(s.outputFormat);
+        setOutputDir(s.outputDirIsCustom ? s.outputDir : "");
+        setOutputDirFromPicker(false);
       })
       .catch((err) => {
         if (!(err instanceof ApiRequestError)) toast("Could not load settings", true);
@@ -196,13 +220,31 @@ export function SettingsPage() {
     }
   };
 
-  const saveOutput = async (next: { audioFormat: AudioFormat; audioQuality: AudioQuality; audioArgs: string; audioCustomEnabled: boolean; outputFormat: typeof outputFormat }) => {
+  const saveOutput = async (next: {
+    audioFormat: AudioFormat;
+    audioQuality: AudioQuality;
+    audioArgs: string;
+    audioCustomEnabled: boolean;
+    outputFormat: typeof outputFormat;
+    outputDir: string;
+    outputDirFromPicker: boolean;
+  }) => {
     try {
       const updated = await api.settings.update(next);
       setSettings(updated);
+      setOutputDir(updated.outputDirIsCustom ? updated.outputDir : "");
+      setOutputDirFromPicker(false);
       setMessage("Settings saved");
     } catch (err) {
       toast(err instanceof ApiRequestError ? err.message : "Could not save settings", true);
+    }
+  };
+
+  const browseOutputDir = async () => {
+    const chosen = await chooseFolderNative(outputDir || settings.outputDir);
+    if (chosen) {
+      setOutputDir(chosen);
+      setOutputDirFromPicker(true);
     }
   };
 
@@ -252,6 +294,24 @@ export function SettingsPage() {
       toast("Library database reset. Files on disk were kept.");
     } catch (err) {
       toast(err instanceof ApiRequestError ? err.message : "Could not reset the database", true);
+    }
+  };
+
+  const clearDownloadCache = async () => {
+    const size = storage ? ` (currently ${formatBytes(storage.downloadCache.bytes)})` : "";
+    if (
+      !(await confirm(
+        `Delete every raw download${size}? Already-converted books are unaffected. Anything not yet converted will need to be downloaded again.`,
+      ))
+    ) {
+      return;
+    }
+    try {
+      const { freedBytes } = await api.debug.clearDownloadCache();
+      toast(`Download cache cleared — freed ${formatBytes(freedBytes)}.`);
+      loadStorage();
+    } catch (err) {
+      toast(err instanceof ApiRequestError ? err.message : "Could not clear the download cache", true);
     }
   };
 
@@ -341,7 +401,54 @@ export function SettingsPage() {
 
             <Tabs.Panel className="tab-panel" value="output">
               <div className="auth-card">
-                <h2>Conversion quality</h2>
+                <h2>Output folder</h2>
+                {settings.outputDirSandboxRisk && (
+                  <p className="auth-error">
+                    <strong>{settings.outputDir}</strong> is outside what the sandbox can reach — files have likely
+                    been landing in the app&apos;s own private folder instead, not the real path shown here. Pick the
+                    folder again with &quot;Browse…&quot; (or reset to the default) and save.
+                  </p>
+                )}
+                <div className="field-stack">
+                  <label htmlFor="output-dir">Converted audiobooks are saved to</label>
+                  <div className="btn-row">
+                    <input
+                      id="output-dir"
+                      value={outputDir}
+                      onChange={(e) => {
+                        setOutputDir(e.target.value);
+                        setOutputDirFromPicker(false);
+                      }}
+                      placeholder={settings.outputDirDefault}
+                      style={{ flex: 1 }}
+                    />
+                    {hasNativeFolderPicker() && (
+                      <button className="btn btn-sm" type="button" onClick={browseOutputDir}>
+                        Browse…
+                      </button>
+                    )}
+                    {outputDir && (
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        type="button"
+                        onClick={() => {
+                          setOutputDir("");
+                          setOutputDirFromPicker(false);
+                        }}
+                      >
+                        Reset to default
+                      </button>
+                    )}
+                  </div>
+                  <p className="hint">
+                    Default: <code>{settings.outputDirDefault}</code>. Saved with the button below.
+                    {settings.desktop && !hasNativeFolderPicker() && (
+                      <> A folder outside ~/Music can only be set through &quot;Browse…&quot;, not typed by hand.</>
+                    )}
+                  </p>
+                </div>
+
+                <h2 style={{ marginTop: "1.5rem" }}>Conversion quality</h2>
                 <div className="quality-section">
                   <label>Output format</label>
                   <div className="btn-row" role="group" aria-label="Output format">
@@ -407,6 +514,8 @@ export function SettingsPage() {
                       audioArgs,
                       audioCustomEnabled: customEnabled,
                       outputFormat,
+                      outputDir,
+                      outputDirFromPicker,
                     })
                   }
                 >
@@ -416,6 +525,38 @@ export function SettingsPage() {
             </Tabs.Panel>
 
             <Tabs.Panel className="tab-panel" value="debug">
+              <div className="auth-card">
+                <h2>Storage</h2>
+                {storage ? (
+                  <ul className="hint" style={{ margin: 0, paddingLeft: "1.2em" }}>
+                    <li>
+                      Download cache: {formatBytes(storage.downloadCache.bytes)} in{" "}
+                      {storage.downloadCache.fileCount} file{storage.downloadCache.fileCount === 1 ? "" : "s"} —{" "}
+                      <code>{storage.downloadCache.path}</code>
+                    </li>
+                    <li>
+                      Converted audiobooks: {formatBytes(storage.converted.bytes)} in{" "}
+                      {storage.converted.fileCount} file{storage.converted.fileCount === 1 ? "" : "s"} —{" "}
+                      <code>{storage.converted.path}</code>
+                    </li>
+                  </ul>
+                ) : (
+                  <p className="hint">Loading…</p>
+                )}
+              </div>
+
+              <div className="auth-card danger-zone">
+                <h2>Clear download cache</h2>
+                <p className="hint">
+                  Raw .aax/.aaxc downloads are kept on disk after conversion and nothing prunes them — this can grow
+                  without bound over time. <strong>Already-converted books are unaffected</strong>; anything not yet
+                  converted goes back to &quot;not downloaded&quot; and will be fetched again on the next sync.
+                </p>
+                <button className="btn btn-danger" type="button" onClick={clearDownloadCache}>
+                  Clear download cache
+                </button>
+              </div>
+
               <div className="auth-card danger-zone">
                 <h2>Reset library database</h2>
                 <p className="hint">

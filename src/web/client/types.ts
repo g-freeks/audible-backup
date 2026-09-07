@@ -92,6 +92,15 @@ export interface SettingsState {
   desktop: boolean;
   audioSettings: AudioSettings;
   outputFormat: OutputFormat;
+  /** Where converted audiobooks are currently written (custom or default). */
+  outputDir: string;
+  /** What outputDir would be without a custom override. */
+  outputDirDefault: string;
+  outputDirIsCustom: boolean;
+  /** True if the saved outputDir is outside what the desktop sandbox can
+   * actually reach (see isSandboxSafePath() server-side) — writes there
+   * silently land somewhere else entirely. Always false outside desktop mode. */
+  outputDirSandboxRisk: boolean;
   version: string;
 }
 
@@ -107,6 +116,17 @@ export interface OperationStartResult {
 
 export interface ApiError {
   error: string;
+}
+
+export interface DirStorageStats {
+  path: string;
+  bytes: number;
+  fileCount: number;
+}
+
+export interface StorageStats {
+  downloadCache: DirStorageStats;
+  converted: DirStorageStats;
 }
 
 export const AUDIO_FORMATS: AudioFormat[] = ["mp3", "flac", "aac"];

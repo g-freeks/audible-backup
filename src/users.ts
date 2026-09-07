@@ -44,6 +44,10 @@ export interface User {
   /** Directory/filename naming template. Unset means today's fixed layout
    * (a folder per book title, chapters named "{number} - {name}"). */
   outputFormat?: OutputFormat;
+  /** Where converted audiobooks are written. Unset means userDirs()'s fixed
+   * default (desktop: $XDG_MUSIC_DIR/Audiobooks; multi-tenant: this user's
+   * own "converted" subdirectory) — see requestPaths() in routes.ts. */
+  outputDir?: string;
 }
 
 export interface UserDirs {
@@ -228,6 +232,16 @@ export function setOutputFormat(name: string, format: OutputFormat): void {
   const user = users.find((u) => u.name === name);
   if (!user) throw new Error(`Unknown user: ${name}`);
   user.outputFormat = format;
+  saveUsers(users);
+}
+
+/** `dir` undefined (or empty) clears the override, reverting to userDirs()'s default. */
+export function setOutputDir(name: string, dir: string | undefined): void {
+  const users = listUsers();
+  const user = users.find((u) => u.name === name);
+  if (!user) throw new Error(`Unknown user: ${name}`);
+  if (dir) user.outputDir = dir;
+  else delete user.outputDir;
   saveUsers(users);
 }
 
