@@ -595,6 +595,15 @@ describe("output naming builder", () => {
     await ui.page.click("#add-folder-level");
     const newRowIndex = (await ui.page.locator("#directory-rows .format-row").count()) - 1;
     const newRow = directoryRow(newRowIndex);
+    // A row added near the bottom of the viewport sits inside dnd-kit's
+    // auto-scroll zone: holding the drag there scrolls the page underneath
+    // the still-fixed pointer, so the drop lands on whatever scrolled into
+    // that spot instead (e.g. the row below). Center it first.
+    await ui.page.evaluate(() => {
+      const el = document.querySelector("#directory-rows .format-row:last-child");
+      const rect = el?.getBoundingClientRect();
+      if (rect) window.scrollBy(0, rect.top - window.innerHeight / 2);
+    });
 
     const titleChip = directoryRow(0).locator(".format-chip", { hasText: "Title" });
     await dragBetween(ui.page, titleChip, newRow.locator(".format-blocks"));
